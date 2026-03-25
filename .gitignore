@@ -1,0 +1,10 @@
+node_modules/
+dist/
+scripts/boundaries/bg_raw/
+scripts/boundaries/places_raw/
+scripts/boundaries/states/
+scripts/boundaries/counties/
+scripts/boundaries/*.geojson
+scripts/boundaries/*.zip
+*.DS_Store
+__pycache__/

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Walkable Land Use — America Walks</title>
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="header">
+        <h1>Who Lives in Walkable Places?</h1>
+        <nav id="geo-nav">
+          <button class="geo-btn active" data-level="states">States</button>
+          <button class="geo-btn" data-level="counties">Counties</button>
+          <button class="geo-btn" data-level="cities">Cities</button>
+        </nav>
+        <div class="view-toggle">
+          <button class="view-btn active" data-view="map">Map</button>
+          <button class="view-btn" data-view="table">Table</button>
+        </div>
+        <button id="info-btn" title="About this tool">?</button>
+      </header>
+      <div id="main">
+        <div id="map-container">
+          <div id="map"></div>
+          <div id="legend">
+
+            <div class="legend-title">Avg Walkability Index</div>
+            <div class="legend-scale"></div>
+          </div>
+        </div>
+        <div id="table-container" class="hidden"></div>
+        <aside id="panel">
+          <div id="panel-empty">
+            <p>Click a state or county to see walkability details.</p>
+          </div>
+          <div id="panel-content" class="hidden">
+            <h2 id="panel-name"></h2>
+            <div id="panel-summary"></div>
+            <div id="nwi-bar"></div>
+            <div id="demographics"></div>
+          </div>
+        </aside>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
