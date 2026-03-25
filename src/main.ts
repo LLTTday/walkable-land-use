@@ -115,7 +115,9 @@ function initMap(): maplibregl.Map {
     // Add PMTiles source
     m.addSource('boundaries', {
       type: 'vector',
-      url: 'pmtiles:///boundaries.pmtiles',
+      url: import.meta.env.DEV
+        ? 'pmtiles:///boundaries.pmtiles'
+        : 'pmtiles://https://github.com/LLTTday/walkable-land-use/releases/download/v0.1.0/boundaries.pmtiles',
       promoteId: { states: 'FIPS', counties: 'FIPS', places: 'FIPS' },
     })
 
@@ -223,7 +225,9 @@ function initMap(): maplibregl.Map {
     // Block group source + layer (separate PMTiles, appears at zoom 7+)
     m.addSource('blockgroups', {
       type: 'vector',
-      url: 'pmtiles:///blockgroups.pmtiles',
+      url: import.meta.env.DEV
+        ? 'pmtiles:///blockgroups.pmtiles'
+        : 'pmtiles://https://github.com/LLTTday/walkable-land-use/releases/download/v0.1.0/blockgroups.pmtiles',
     })
 
     m.addLayer({
