@@ -117,7 +117,7 @@ function initMap(): maplibregl.Map {
       type: 'vector',
       url: import.meta.env.DEV
         ? 'pmtiles:///boundaries.pmtiles'
-        : 'pmtiles://https://github.com/LLTTday/walkable-land-use/releases/download/v0.1.0/boundaries.pmtiles',
+        : 'pmtiles:///tiles/boundaries.pmtiles',
       promoteId: { states: 'FIPS', counties: 'FIPS', places: 'FIPS' },
     })
 
@@ -227,7 +227,7 @@ function initMap(): maplibregl.Map {
       type: 'vector',
       url: import.meta.env.DEV
         ? 'pmtiles:///blockgroups.pmtiles'
-        : 'pmtiles://https://github.com/LLTTday/walkable-land-use/releases/download/v0.1.0/blockgroups.pmtiles',
+        : 'pmtiles:///tiles/blockgroups.pmtiles',
     })
 
     m.addLayer({
@@ -272,8 +272,9 @@ function initMap(): maplibregl.Map {
     // Labels removed — duplicating at multiple zoom levels.
     // TODO: revisit with proper label deduplication or a base map tile source.
 
-    // Load initial data and color the map
+    // Load initial data, color the map, show national stats
     setLevel('states')
+    fetch('/data/national.json').then(r => r.json()).then(j => showPanel(j))
 
     // ─── Click handler (single, idle-gated) ───
     let isAnimating = false
@@ -757,7 +758,7 @@ function renderNwiByView(el: HTMLElement, j: Jurisdiction, section: typeof DEMO_
     const total = Object.values(cat).reduce((a, b) => a + b, 0)
     if (total === 0) continue
 
-    html += `<div class="demo-row"><span class="demo-label" style="width:70px">
+    html += `<div class="demo-row"><span class="demo-label">
       <span class="nwi-dot" style="background:${NWI_COLORS[i]}"></span>${NWI_LEVEL_LABELS[i]}
     </span>`
     html += '<div class="demo-bar-bg"><div class="nwi-stacked-bar">'

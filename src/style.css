@@ -31,17 +31,17 @@ body { height: 100vh; overflow: hidden; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 20px;
+  padding: 14px 24px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   flex-shrink: 0;
 }
 
 #header h1 {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
   color: var(--accent);
-  letter-spacing: 0.2px;
+  letter-spacing: -0.2px;
 }
 
 #geo-nav {
@@ -58,7 +58,7 @@ body { height: 100vh; overflow: hidden; }
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .geo-btn:hover { border-color: var(--fg-tertiary); color: var(--fg); }
@@ -109,12 +109,12 @@ body { height: 100vh; overflow: hidden; }
 .legend-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .legend-swatch {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 10px;
   border-radius: 2px;
   flex-shrink: 0;
 }
@@ -143,17 +143,17 @@ body { height: 100vh; overflow: hidden; }
 .hidden { display: none !important; }
 
 #panel-name {
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 700;
   color: var(--accent);
-  margin-bottom: 16px;
+  margin-bottom: 20px;
   line-height: 1.3;
 }
 
 #panel-summary {
   display: flex;
   gap: 10px;
-  margin-bottom: 20px;
+  margin-bottom: 28px;
 }
 
 .stat-card {
@@ -161,8 +161,13 @@ body { height: 100vh; overflow: hidden; }
   background: white;
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 10px 8px;
+  padding: 14px 12px;
   text-align: center;
+}
+
+.stat-card:nth-child(2) {
+  border-color: var(--accent);
+  border-width: 1.5px;
 }
 
 .stat-value {
@@ -174,13 +179,13 @@ body { height: 100vh; overflow: hidden; }
 .stat-label {
   font-size: 9px;
   color: var(--fg-tertiary);
-  margin-top: 3px;
+  margin-top: 4px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
 
 /* ─── NWI Bar ─── */
-#nwi-bar { margin-bottom: 20px; padding: 0; }
+#nwi-bar { margin-bottom: 28px; padding: 0; }
 
 .nwi-bar-container {
   display: flex;
@@ -229,7 +234,7 @@ body { height: 100vh; overflow: hidden; }
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 5px;
+  margin-bottom: 7px;
   font-size: 12px;
 }
 
@@ -328,7 +333,7 @@ body { height: 100vh; overflow: hidden; }
   border-bottom: 1px solid var(--border);
 }
 
-.data-table tbody tr:hover { background: rgba(137, 14, 146, 0.04); }
+.data-table tbody tr:hover { background: rgba(26, 26, 26, 0.04); }
 
 .cell-rank { text-align: right; color: var(--fg-tertiary); font-variant-numeric: tabular-nums; }
 .cell-name { font-weight: 500; }
