@@ -35,7 +35,11 @@ body { height: 100vh; overflow: hidden; }
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   flex-shrink: 0;
+  gap: 16px;
 }
+
+#aw-logo { display: flex; flex-shrink: 0; }
+#aw-logo img { height: 28px; width: auto; }
 
 #header h1 {
   font-size: 18px;
@@ -275,19 +279,43 @@ body { height: 100vh; overflow: hidden; }
   flex-direction: column;
 }
 
+.table-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
 .table-search {
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 13px;
-  margin-bottom: 8px;
   font-family: inherit;
-  flex-shrink: 0;
+  flex: 1;
 }
 
 .table-search:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+.table-export-btn {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.table-export-btn:hover {
+  border-color: var(--accent);
+  color: var(--fg);
 }
 
 .data-table {

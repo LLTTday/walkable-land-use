@@ -42,7 +42,10 @@ export function buildTable(
   const wrapper = document.createElement('div')
   wrapper.className = 'table-wrapper'
 
-  // Search input
+  // Toolbar: search + export
+  const toolbar = document.createElement('div')
+  toolbar.className = 'table-toolbar'
+
   const search = document.createElement('input')
   search.type = 'text'
   search.placeholder = 'Search by name...'
@@ -51,7 +54,15 @@ export function buildTable(
     filter = search.value.toLowerCase()
     render()
   })
-  wrapper.appendChild(search)
+  toolbar.appendChild(search)
+
+  const exportBtn = document.createElement('button')
+  exportBtn.className = 'table-export-btn'
+  exportBtn.textContent = 'Export CSV'
+  exportBtn.addEventListener('click', () => exportCsv(rows, filter, sortKey, sortDir))
+  toolbar.appendChild(exportBtn)
+
+  wrapper.appendChild(toolbar)
 
   // Single table in a scroll wrapper
   const scrollDiv = document.createElement('div')
@@ -155,4 +166,33 @@ function formatNum(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
   if (n >= 1_000) return Math.round(n / 1_000).toLocaleString() + 'k'
   return n.toLocaleString()
+}
+
+function exportCsv(rows: JurisdictionRow[], filter: string, sortKey: SortKey, sortDir: SortDir) {
+  let filtered = rows
+  if (filter) {
+    filtered = rows.filter(r => r.name.toLowerCase().includes(filter))
+  }
+  filtered.sort((a, b) => {
+    let va: any = a[sortKey]
+    let vb: any = b[sortKey]
+    if (typeof va === 'string') { va = va.toLowerCase(); vb = (vb as string).toLowerCase() }
+    if (va < vb) return sortDir === 'asc' ? -1 : 1
+    if (va > vb) return sortDir === 'asc' ? 1 : -1
+    return 0
+  })
+
+  const header = 'Name,Population,Avg Walkability Index,Least Walkable Pop,Below Average Pop,Above Average Pop,Most Walkable Pop'
+  const csvRows = filtered.map(r => {
+    const name = r.name.includes(',') ? `"${r.name}"` : r.name
+    return `${name},${r.population},${r.avg_nwi.toFixed(2)},${r.least},${r.below},${r.above},${r.most}`
+  })
+
+  const blob = new Blob([header + '\n' + csvRows.join('\n')], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'walkability-data.csv'
+  a.click()
+  URL.revokeObjectURL(url)
 }
