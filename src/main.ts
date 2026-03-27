@@ -282,6 +282,12 @@ function initMap(): maplibregl.Map {
     m.on('click', (e) => {
       if (isAnimating) return
 
+      // If block groups are visible and click hit one, let the BG popup handle it
+      if (m.getZoom() >= 7) {
+        const bgHit = m.queryRenderedFeatures(e.point, { layers: ['bg-fill'] })
+        if (bgHit.length) return
+      }
+
       // Query the active layer only
       const activeLayer = currentLevel === 'states' ? 'states-fill'
         : currentLevel === 'counties' ? 'counties-fill'
@@ -353,6 +359,48 @@ function initMap(): maplibregl.Map {
         m.once('idle', () => { isAnimating = false })
       },
     }
+
+    // ─── Block group popup (zoom 7+) ───
+    let bgPopup: maplibregl.Popup | null = null
+
+    m.on('click', 'bg-fill', (e) => {
+      if (isAnimating || !e.features?.length) return
+      const props = e.features[0].properties!
+      const score = props.s as number
+      const pop = props.p as number | undefined
+      const geoid = props.g as string | undefined
+
+      // Derive NWI level label from score
+      const levelLabel = score >= 6 ? 'Most Walkable'
+        : score >= 5 ? 'Above Average'
+        : score >= 4 ? 'Below Average'
+        : 'Least Walkable'
+
+      // Derive NWI level index for color
+      const levelIdx = score >= 6 ? 3 : score >= 5 ? 2 : score >= 4 ? 1 : 0
+
+      let html = '<div class="bg-popup">'
+      html += `<div class="bg-popup-score" style="border-left:3px solid ${NWI_COLORS[levelIdx]}">`
+      html += `<strong>${score.toFixed(1)}</strong> <span class="bg-popup-label">${levelLabel}</span>`
+      html += '</div>'
+      if (pop != null) {
+        html += `<div class="bg-popup-row">Pop. ${pop.toLocaleString()}</div>`
+      }
+      if (geoid) {
+        html += `<div class="bg-popup-geoid">${geoid}</div>`
+      }
+      html += '</div>'
+
+      if (bgPopup) bgPopup.remove()
+      bgPopup = new maplibregl.Popup({ closeButton: true, maxWidth: '220px' })
+        .setLngLat(e.lngLat)
+        .setHTML(html)
+        .addTo(m)
+    })
+
+    // Pointer cursor on block groups at high zoom
+    m.on('mouseenter', 'bg-fill', () => { m.getCanvas().style.cursor = 'pointer' })
+    m.on('mouseleave', 'bg-fill', () => { m.getCanvas().style.cursor = '' })
   })
 
   return m
@@ -626,6 +674,8 @@ const DEMO_SECTIONS = [
   { key: 'income', title: 'Income', labels: { under_25k: 'Under $25k', '25k_50k': '$25k–50k', '50k_100k': '$50k–100k', over_100k: 'Over $100k' } as Record<string, string> },
   { key: 'homeownership', title: 'Homeownership', labels: { owner: 'Owner', renter: 'Renter' } as Record<string, string> },
   { key: 'transportation', title: 'Transportation', labels: { drove_alone: 'Drove Alone', carpool: 'Carpool', transit: 'Transit', walking: 'Walking', bicycle: 'Bicycle', wfh: 'Work from Home' } as Record<string, string> },
+  { key: 'age', title: 'Age', labels: { under_18: 'Under 18', '18_24': '18–24', '25_34': '25–34', '35_44': '35–44', '45_54': '45–54', '55_64': '55–64', '65_74': '65–74', '75_84': '75–84', '85_plus': '85+' } as Record<string, string> },
+  { key: 'education', title: 'Education', labels: { less_than_hs: 'Less than HS', hs_grad: 'HS Grad/GED', some_college: 'Some College', associates: "Associate's", bachelors: "Bachelor's", masters: "Master's", professional: 'Professional', doctorate: 'Doctorate' } as Record<string, string> },
 ]
 
 let currentDemoCategory = 0

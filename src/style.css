@@ -561,6 +561,33 @@ body { height: 100vh; overflow: hidden; }
   border-color: var(--fg);
 }
 
+/* ─── Block group popup ─── */
+.bg-popup {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.bg-popup-score {
+  padding-left: 8px;
+  margin-bottom: 4px;
+}
+.bg-popup-score strong {
+  font-size: 16px;
+}
+.bg-popup-label {
+  color: var(--fg-secondary);
+  font-size: 12px;
+}
+.bg-popup-row {
+  color: var(--fg);
+}
+.bg-popup-geoid {
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 10px;
+  color: var(--fg-tertiary);
+  margin-top: 2px;
+}
+
 /* ─── Responsive ─── */
 @media (max-width: 768px) {
   #main { flex-direction: column; }

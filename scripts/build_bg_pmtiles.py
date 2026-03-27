@@ -29,20 +29,21 @@ MAX_ZOOM = 12
 
 
 def load_nwi_scores():
-    """Load NWI scores from database, keyed by geoid (12-digit block group)."""
+    """Load NWI scores + population from database, keyed by geoid (12-digit block group)."""
     conn = sqlite3.connect(str(DB))
     rows = conn.execute("""
         SELECT geoid10,
                CAST(nwi AS INTEGER) as nwi_level,
-               CAST(nwi_scaled_10 AS REAL) as nwi_score
+               CAST(nwi_scaled_10 AS REAL) as nwi_score,
+               CAST(b02001_001e AS INTEGER) as population
         FROM nwi_full
         WHERE geography_type = 'block_group'
     """).fetchall()
     conn.close()
 
     scores = {}
-    for geoid, nwi_level, nwi_score in rows:
-        scores[geoid] = (nwi_level, nwi_score or 0)
+    for geoid, nwi_level, nwi_score, population in rows:
+        scores[geoid] = (nwi_level, nwi_score or 0, population or 0)
 
     print(f"Loaded {len(scores):,} NWI scores")
     return scores
@@ -85,10 +86,12 @@ def main():
 
             nwi_data = scores.get(geoid)
             if nwi_data:
-                nwi_level, nwi_score = nwi_data
+                nwi_level, nwi_score, population = nwi_data
                 feat["properties"] = {
                     "nwi": nwi_level,
                     "s": round(nwi_score, 1),  # short key to save space
+                    "p": population,            # population
+                    "g": geoid,                 # geoid FIPS
                 }
                 all_features.append(feat)
                 matched += 1
