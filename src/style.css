@@ -599,6 +599,11 @@ body { height: 100vh; overflow: hidden; }
   border-color: var(--fg);
 }
 
+/* ─── Block group tooltip (non-interactive) ─── */
+.bg-tooltip, .bg-tooltip .maplibregl-popup-content, .bg-tooltip .maplibregl-popup-tip {
+  pointer-events: none;
+}
+
 /* ─── Block group popup ─── */
 .bg-popup {
   font-family: inherit;

@@ -478,7 +478,7 @@ function initMap(): maplibregl.Map {
       const html = `<div class="bg-popup"><div class="bg-popup-score" style="border-left:3px solid ${NWI_COLORS[levelIdx]}"><strong>${score.toFixed(1)}</strong> <span class="bg-popup-label">${levelLabel}</span></div></div>`
 
       if (!bgTooltip) {
-        bgTooltip = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: '180px', offset: 12 })
+        bgTooltip = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: '180px', offset: 12, className: 'bg-tooltip' })
           .addTo(m)
       }
       bgTooltip.setLngLat(e.lngLat).setHTML(html)
