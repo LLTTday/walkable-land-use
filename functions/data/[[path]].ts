@@ -1,5 +1,5 @@
 // Cloudflare Pages Function — proxy large data files from GitHub releases
-const BASE = 'https://github.com/LLTTday/walkable-land-use/releases/download/v0.2.0'
+const BASE = 'https://github.com/LLTTday/walkable-land-use/releases/download/v0.3.0'
 
 const PROXIED = new Set(['cities.json', 'counties.json'])
 
