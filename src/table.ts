@@ -46,7 +46,7 @@ export function buildTable(
   let sortKey: SortKey = 'avg_nwi'
   let sortDir: SortDir = 'desc'
   let filter = ''
-  let minPop = 0
+  let minPop = rows.length > 1000 ? 50000 : 0
   let stateFilter = ''
 
   const wrapper = document.createElement('div')
@@ -88,7 +88,7 @@ export function buildTable(
     <option value="0">All populations</option>
     <option value="1000">Pop. 1,000+</option>
     <option value="10000">Pop. 10,000+</option>
-    <option value="50000">Pop. 50,000+</option>
+    <option value="50000"${minPop === 50000 ? ' selected' : ''}>Pop. 50,000+</option>
     <option value="100000">Pop. 100,000+</option>
   `
   popSelect.addEventListener('change', () => {
