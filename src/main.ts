@@ -223,15 +223,16 @@ function initMap(): maplibregl.Map {
       },
     })
 
-    // State outline
+    // State outline — thickens at high zoom so it reads above BG fills
     m.addLayer({
       id: 'states-line',
       type: 'line',
       source: 'boundaries',
       'source-layer': 'states',
       paint: {
-        'line-color': '#fff',
-        'line-width': 1,
+        'line-color': ['interpolate', ['linear'], ['zoom'], 6, '#ffffff', 8, '#4a4540'],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 3, 1, 8, 2.5],
+        'line-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0.8, 8, 0.9],
       },
     })
 
@@ -248,15 +249,16 @@ function initMap(): maplibregl.Map {
       layout: { visibility: 'none' },
     })
 
-    // County outline
+    // County outline — thickens at high zoom
     m.addLayer({
       id: 'counties-line',
       type: 'line',
       source: 'boundaries',
       'source-layer': 'counties',
       paint: {
-        'line-color': '#fff',
-        'line-width': 0.5,
+        'line-color': ['interpolate', ['linear'], ['zoom'], 6, '#ffffff', 8, '#6b6560'],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.5, 8, 1.5],
+        'line-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0.6, 8, 0.8],
       },
       layout: { visibility: 'none' },
     })
@@ -274,15 +276,16 @@ function initMap(): maplibregl.Map {
       layout: { visibility: 'none' },
     })
 
-    // Places outline
+    // Places outline — thickens at high zoom
     m.addLayer({
       id: 'places-line',
       type: 'line',
       source: 'boundaries',
       'source-layer': 'places',
       paint: {
-        'line-color': '#fff',
-        'line-width': 0.5,
+        'line-color': ['interpolate', ['linear'], ['zoom'], 6, '#ffffff', 8, '#6b6560'],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.5, 8, 1.5],
+        'line-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0.6, 8, 0.8],
       },
       layout: { visibility: 'none' },
     })
