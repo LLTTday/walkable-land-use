@@ -290,58 +290,6 @@ function initMap(): maplibregl.Map {
       layout: { visibility: 'none' },
     })
 
-    // ─── Highlight layers driven by feature-state ───
-    for (const sl of ['states', 'counties', 'places'] as const) {
-      // Bright outline for selection/hover — visible against any choropleth color
-      m.addLayer({
-        id: `highlight-${sl}`,
-        type: 'line',
-        source: 'boundaries',
-        'source-layer': sl,
-        paint: {
-          'line-color': [
-            'case',
-            ['boolean', ['feature-state', 'selected'], false], '#ffffff',
-            ['boolean', ['feature-state', 'hover'], false], '#ffffff',
-            'transparent',
-          ],
-          'line-width': [
-            'case',
-            ['boolean', ['feature-state', 'selected'], false], 3,
-            ['boolean', ['feature-state', 'hover'], false], 2,
-            0,
-          ],
-          'line-opacity': [
-            'case',
-            ['boolean', ['feature-state', 'selected'], false], 1,
-            ['boolean', ['feature-state', 'hover'], false], 0.7,
-            0,
-          ],
-        },
-      })
-      // Dark inner stroke for contrast on light fills
-      m.addLayer({
-        id: `highlight-inner-${sl}`,
-        type: 'line',
-        source: 'boundaries',
-        'source-layer': sl,
-        paint: {
-          'line-color': '#1a1a1a',
-          'line-width': [
-            'case',
-            ['boolean', ['feature-state', 'selected'], false], 1.5,
-            0,
-          ],
-          'line-opacity': [
-            'case',
-            ['boolean', ['feature-state', 'selected'], false], 0.8,
-            0,
-          ],
-          'line-offset': -2,
-        },
-      })
-    }
-
     // Block group source + layer (separate PMTiles, appears at zoom 7+)
     m.addSource('blockgroups', {
       type: 'vector',
@@ -378,6 +326,46 @@ function initMap(): maplibregl.Map {
     })
 
     // No BG boundary lines — fill-only choropleth is cleaner
+
+    // ─── Highlight layers (on top of BG fills so they're always visible) ───
+    for (const sl of ['states', 'counties', 'places'] as const) {
+      m.addLayer({
+        id: `highlight-${sl}`,
+        type: 'line',
+        source: 'boundaries',
+        'source-layer': sl,
+        paint: {
+          'line-color': [
+            'case',
+            ['boolean', ['feature-state', 'selected'], false], '#1a1a1a',
+            ['boolean', ['feature-state', 'hover'], false], '#1a1a1a',
+            'transparent',
+          ],
+          'line-width': [
+            'case',
+            ['boolean', ['feature-state', 'selected'], false], 4,
+            ['boolean', ['feature-state', 'hover'], false], 2.5,
+            0,
+          ],
+        },
+      })
+      // White inner line for double-stroke contrast
+      m.addLayer({
+        id: `highlight-inner-${sl}`,
+        type: 'line',
+        source: 'boundaries',
+        'source-layer': sl,
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': [
+            'case',
+            ['boolean', ['feature-state', 'selected'], false], 2,
+            ['boolean', ['feature-state', 'hover'], false], 1,
+            0,
+          ],
+        },
+      })
+    }
 
     // Load initial data, color the map, show national stats
     setLevel('states')
@@ -648,13 +636,16 @@ function selectFeature(fips: string, _lngLat: maplibregl.LngLat) {
   // Highlight via feature-state
   clearSelection()
   const sourceLayer = level === 'cities' ? 'places' : 'counties'
-  map.setFeatureState(
-    { source: 'boundaries', sourceLayer, id: fips },
-    { selected: true }
-  )
+  const applySelection = () => {
+    map.setFeatureState(
+      { source: 'boundaries', sourceLayer, id: fips },
+      { selected: true }
+    )
+  }
+  applySelection()
   selectedFeature = { id: fips, sourceLayer }
 
-  // Zoom — use requestAnimationFrame to ensure a clean frame after any prior animation
+  // Zoom — re-apply feature-state after tiles settle at new zoom
   const fb = featureBounds[fips]
   requestAnimationFrame(() => {
     if (fb) {
@@ -662,6 +653,8 @@ function selectFeature(fips: string, _lngLat: maplibregl.LngLat) {
     } else {
       map.flyTo({ center: _lngLat, zoom: 9, duration: 800 })
     }
+    // Re-apply after zoom settles — new tiles lose feature-state
+    map.once('idle', applySelection)
   })
 
   // Panel
