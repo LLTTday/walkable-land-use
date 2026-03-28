@@ -359,28 +359,7 @@ function initMap(): maplibregl.Map {
       layout: { visibility: 'none' },
     })
 
-    // ─── Selection dim overlay (between fills and BGs) ───
-    // Covers ALL land when a feature is selected, dimming the entire area.
-    // A bright fill for the selected feature sits on top to "cut out" the dim.
-    m.addLayer({
-      id: 'dim-overlay',
-      type: 'fill',
-      source: 'boundaries',
-      'source-layer': 'states',
-      paint: { 'fill-color': '#000000', 'fill-opacity': 0 },
-    })
-    for (const sl of ['states', 'counties', 'places'] as const) {
-      m.addLayer({
-        id: `selected-bright-${sl}`,
-        type: 'fill',
-        source: 'boundaries',
-        'source-layer': sl,
-        filter: ['==', ['get', 'FIPS'], '__none__'],
-        paint: { 'fill-color': '#f0efed', 'fill-opacity': 0.9 },
-      })
-    }
-
-    // Block group source + layer (separate PMTiles, appears at zoom 7+)
+    // Block group layer (below dim — visible through the cutout hole)
     m.addSource('blockgroups', {
       type: 'vector',
       url: import.meta.env.DEV
@@ -406,13 +385,26 @@ function initMap(): maplibregl.Map {
           7.0, '#5a9a4a',
           8.0, '#3d6b35',
         ],
-        // Fade in as city fills fade out — seamless transition
         'fill-opacity': [
           'interpolate', ['linear'], ['zoom'],
           9, 0,
           10, 0.85,
         ],
       },
+    })
+
+    // ─── Selection dim with cutout (GeoJSON source — above BGs) ───
+    // A world-covering polygon with the selected feature as an interior hole.
+    // Everything outside the hole is dimmed; BGs inside are visible.
+    m.addSource('dim-mask', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    })
+    m.addLayer({
+      id: 'dim-overlay',
+      type: 'fill',
+      source: 'dim-mask',
+      paint: { 'fill-color': '#000000', 'fill-opacity': 0.45 },
     })
 
     // No BG boundary lines — fill-only choropleth is cleaner
@@ -659,7 +651,6 @@ async function setLevel(level: 'states' | 'counties' | 'cities') {
     const vis = (lvl === level || lvl === 'states') ? 'visible' : 'none'
     map.setLayoutProperty(`highlight-${sl}`, 'visibility', vis)
     map.setLayoutProperty(`highlight-inner-${sl}`, 'visibility', vis)
-    map.setLayoutProperty(`selected-bright-${sl}`, 'visibility', vis)
     map.setLayoutProperty(`selected-${sl}`, 'visibility', vis)
     map.setLayoutProperty(`selected-inner-${sl}`, 'visibility', vis)
   }
@@ -717,9 +708,8 @@ let selectedFeature: { id: string; sourceLayer: string } | null = null
 function clearSelection() {
   if (selectedFeature) {
     const sl = selectedFeature.sourceLayer
-    // Remove dim + bright cutout
-    map.setPaintProperty('dim-overlay', 'fill-opacity', 0)
-    map.setFilter(`selected-bright-${sl}`, ['==', ['get', 'FIPS'], '__none__'])
+    // Clear dim mask
+    ;(map.getSource('dim-mask') as maplibregl.GeoJSONSource).setData({ type: 'FeatureCollection', features: [] })
     // Remove outline
     map.setFilter(`selected-${sl}`, ['==', ['get', 'FIPS'], ''])
     map.setFilter(`selected-inner-${sl}`, ['==', ['get', 'FIPS'], ''])
@@ -785,9 +775,30 @@ function selectFeature(fips: string, _lngLat: maplibregl.LngLat) {
   clearSelection()
   const sourceLayer = level === 'cities' ? 'places' : 'counties'
 
-  // Dim all land, then bright-fill the selected feature to cut it out
-  map.setPaintProperty('dim-overlay', 'fill-opacity', 0.45)
-  map.setFilter(`selected-bright-${sourceLayer}`, ['==', ['get', 'FIPS'], fips])
+  // Build dim mask: world polygon with selected feature as a hole
+  const fillLayer = sourceLayer === 'places' ? 'places-fill' : `${sourceLayer}-fill`
+  const rendered = map.queryRenderedFeatures(undefined as any, { layers: [fillLayer], filter: ['==', ['get', 'FIPS'], fips] })
+  if (rendered.length > 0) {
+    const geom = rendered[0].geometry
+    // World exterior ring (covers entire viewport and beyond)
+    const world = [[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]
+    // Extract hole rings from the selected feature
+    let holes: number[][][] = []
+    if (geom.type === 'Polygon') {
+      holes = geom.coordinates.map(ring => [...ring].reverse())
+    } else if (geom.type === 'MultiPolygon') {
+      // Use the largest polygon as the hole
+      for (const poly of geom.coordinates) {
+        holes.push(...poly.map(ring => [...ring].reverse()))
+      }
+    }
+    const mask: GeoJSON.Feature = {
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'Polygon', coordinates: [world, ...holes] },
+    }
+    ;(map.getSource('dim-mask') as maplibregl.GeoJSONSource).setData(mask)
+  }
   // Outline the selected feature
   map.setFilter(`selected-${sourceLayer}`, ['==', ['get', 'FIPS'], fips])
   map.setFilter(`selected-inner-${sourceLayer}`, ['==', ['get', 'FIPS'], fips])

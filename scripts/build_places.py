@@ -111,6 +111,7 @@ def main():
     point_features = []      # centroid features
     bounds = {}              # FIPS -> [minLon, minLat, maxLon, maxLat]
     inc_lookup = {}          # FIPS -> 1 (incorporated) or 0 (CDP/other)
+    state_geoms = {}         # state_fips -> {cities_key: geometry}
     unmatched_cities = set(city_lookup.keys())
 
     shapefiles = sorted(PLACES_DIR.glob("tl_2010_*_place10.shp"))
@@ -166,9 +167,10 @@ def main():
             }
             matched_features.append(feat)
 
-            # Compute bounds
+            # Compute bounds and store geometry for per-state files
             bbox = bbox_of_geometry(feat["geometry"])
             bounds[cities_key] = [round(v, 4) for v in bbox]
+            state_geoms.setdefault(state_fips, {})[cities_key] = feat["geometry"]
 
             # Centroid point feature — tippecanoe:minzoom controls when it appears
             center = centroid_of_bbox(bbox)
@@ -240,6 +242,18 @@ def main():
     total_inc = len(inc_set)
     total_cdp = len(inc_lookup) - total_inc
     print(f"Incorporated: {total_inc}, CDPs/other: {total_cdp}")
+
+    # Write per-state geometry files for dim mask cutout
+    geom_dir = PUBLIC / "data" / "geom"
+    geom_dir.mkdir(parents=True, exist_ok=True)
+    total_geom_kb = 0
+    for sfips, geoms in sorted(state_geoms.items()):
+        # {cities_key: geometry} — compact, no FeatureCollection wrapper
+        out = geom_dir / f"{sfips}.json"
+        with open(out, "w") as f:
+            json.dump(geoms, f, separators=(",", ":"))
+        total_geom_kb += out.stat().st_size / 1024
+    print(f"Geometry files: {len(state_geoms)} states, {total_geom_kb:.0f}KB total")
 
     # Regenerate PMTiles with four layers
     states_gj = BOUNDARIES_DIR / "states_clean.geojson"
