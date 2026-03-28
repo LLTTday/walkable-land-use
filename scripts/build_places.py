@@ -110,6 +110,7 @@ def main():
     matched_features = []    # polygon features
     point_features = []      # centroid features
     bounds = {}              # FIPS -> [minLon, minLat, maxLon, maxLat]
+    inc_lookup = {}          # FIPS -> 1 (incorporated) or 0 (CDP/other)
     unmatched_cities = set(city_lookup.keys())
 
     shapefiles = sorted(PLACES_DIR.glob("tl_2010_*_place10.shp"))
@@ -150,13 +151,18 @@ def main():
             pop = city_data["population"]
             nwi = city_data["avg_nwi"]
 
-            # Polygon feature — embed score and population
+            # LSAD10: "25" = incorporated, "43" = CDP, etc.
+            lsad = props.get("LSAD10", "")
+            is_incorporated = 1 if lsad == "25" else 0
+
+            # Polygon feature — embed score, population, and incorporation status
             feat["properties"] = {
                 "FIPS": cities_key,
                 "NAME": place_name,
                 "STATEFP": state_fips,
                 "nwi": nwi,
                 "pop": pop,
+                "inc": is_incorporated,
             }
             matched_features.append(feat)
 
@@ -176,8 +182,12 @@ def main():
                     "STATEFP": state_fips,
                     "nwi": nwi,
                     "pop": pop,
+                    "inc": is_incorporated,
                 },
             })
+
+            # Track incorporation status for lookup file
+            inc_lookup[cities_key] = is_incorporated
             state_matched += 1
 
         if state_matched > 0:
@@ -220,6 +230,16 @@ def main():
     with open(bounds_path, "w") as f:
         json.dump(all_bounds, f, separators=(",", ":"))
     print(f"Updated bounds.json: {len(all_bounds)} entries ({len(bounds)} places)")
+
+    # Write incorporation lookup
+    inc_path = PUBLIC / "data" / "incorporated.json"
+    # Just store the set of incorporated keys (smaller than full lookup)
+    inc_set = sorted(k for k, v in inc_lookup.items() if v == 1)
+    with open(inc_path, "w") as f:
+        json.dump(inc_set, f, separators=(",", ":"))
+    total_inc = len(inc_set)
+    total_cdp = len(inc_lookup) - total_inc
+    print(f"Incorporated: {total_inc}, CDPs/other: {total_cdp}")
 
     # Regenerate PMTiles with four layers
     states_gj = BOUNDARIES_DIR / "states_clean.geojson"

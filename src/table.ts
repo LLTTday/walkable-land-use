@@ -22,6 +22,7 @@ export function buildTable(
   container: HTMLElement,
   data: Record<string, { name: string; population: number; avg_nwi: number; by_nwi: Record<string, { population: number }> }>,
   onRowClick?: (fips: string) => void,
+  options?: { level?: string; incorporatedSet?: Set<string> },
 ) {
   // Transform data into rows
   const rows: JurisdictionRow[] = Object.entries(data).map(([fips, j]) => ({
@@ -43,11 +44,15 @@ export function buildTable(
   }
   const stateList = Array.from(stateSet).sort()
 
+  const level = options?.level || ''
+  const incorporatedSet = options?.incorporatedSet || null
+
   let sortKey: SortKey = 'avg_nwi'
   let sortDir: SortDir = 'desc'
   let filter = ''
-  let minPop = rows.length > 1000 ? 50000 : 0
+  let minPop = level === 'cities' ? 50000 : 0
   let stateFilter = ''
+  let incFilter: 'all' | 'incorporated' = level === 'cities' ? 'incorporated' : 'all'
 
   const wrapper = document.createElement('div')
   wrapper.className = 'table-wrapper'
@@ -85,7 +90,7 @@ export function buildTable(
   const popSelect = document.createElement('select')
   popSelect.className = 'table-filter-select'
   popSelect.innerHTML = `
-    <option value="0">All populations</option>
+    <option value="0"${minPop === 0 ? ' selected' : ''}>All populations</option>
     <option value="1000">Pop. 1,000+</option>
     <option value="10000">Pop. 10,000+</option>
     <option value="50000"${minPop === 50000 ? ' selected' : ''}>Pop. 50,000+</option>
@@ -97,6 +102,22 @@ export function buildTable(
     render()
   })
   toolbar.appendChild(popSelect)
+
+  // Incorporated filter (cities only)
+  if (level === 'cities' && incorporatedSet) {
+    const incSelect = document.createElement('select')
+    incSelect.className = 'table-filter-select'
+    incSelect.innerHTML = `
+      <option value="incorporated" selected>Incorporated only</option>
+      <option value="all">All places</option>
+    `
+    incSelect.addEventListener('change', () => {
+      incFilter = incSelect.value as 'all' | 'incorporated'
+      visibleCount = PAGE_SIZE
+      render()
+    })
+    toolbar.appendChild(incSelect)
+  }
 
   const exportBtn = document.createElement('button')
   exportBtn.className = 'table-export-btn'
@@ -127,6 +148,9 @@ export function buildTable(
     if (filter) filtered = filtered.filter(r => r.name.toLowerCase().includes(filter))
     if (minPop > 0) filtered = filtered.filter(r => r.population >= minPop)
     if (stateFilter) filtered = filtered.filter(r => r.name.endsWith(`, ${stateFilter}`))
+    if (incFilter === 'incorporated' && incorporatedSet) {
+      filtered = filtered.filter(r => incorporatedSet.has(r.fips))
+    }
     return filtered
   }
 

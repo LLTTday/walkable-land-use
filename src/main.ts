@@ -45,6 +45,7 @@ let map: maplibregl.Map
 let _drillState: string | null = null // state FIPS when drilled into counties
 void _drillState
 let featureBounds: Record<string, [number, number, number, number]> = {}
+let incorporatedSet: Set<string> | null = null
 
 // State FIPS → approximate bounds for zoom
 const STATE_BOUNDS: Record<string, [[number, number], [number, number]]> = {
@@ -190,7 +191,7 @@ function initMap(): maplibregl.Map {
       layers: [{
         id: 'background',
         type: 'background',
-        paint: { 'background-color': '#f5f4f2' },
+        paint: { 'background-color': '#5a5755' },
       }],
       glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
     },
@@ -209,6 +210,15 @@ function initMap(): maplibregl.Map {
         ? 'pmtiles:///boundaries.pmtiles'
         : 'pmtiles:///tiles/boundaries.pmtiles',
       promoteId: { states: 'FIPS', counties: 'FIPS', places: 'FIPS', places_points: 'FIPS' },
+    })
+
+    // Base land fill — always visible, light gray underneath everything
+    m.addLayer({
+      id: 'land',
+      type: 'fill',
+      source: 'boundaries',
+      'source-layer': 'states',
+      paint: { 'fill-color': '#f0efed', 'fill-opacity': 1 },
     })
 
     // State fill layer
@@ -410,8 +420,33 @@ function initMap(): maplibregl.Map {
       })
     }
 
-    // ─── Selection highlight layers (filter-driven — no feature-state dependency) ───
+    // ─── Selection layers (filter-driven — no feature-state dependency) ───
     for (const sl of ['states', 'counties', 'places'] as const) {
+      // Selected fill — full brightness on the selected feature (spotlight)
+      m.addLayer({
+        id: `selected-fill-${sl}`,
+        type: 'fill',
+        source: 'boundaries',
+        'source-layer': sl,
+        filter: ['==', ['get', 'FIPS'], ''],
+        paint: {
+          'fill-color': sl === 'places'
+            ? [
+                'step', ['get', 'nwi'],
+                '#e8e4e0',
+                0.1, '#e84830',
+                4.0, '#e8a030',
+                5.0, '#e8d030',
+                5.5, '#c8d868',
+                6.0, '#7ebf6e',
+                7.0, '#5a9a4a',
+                8.0, '#3d6b35',
+              ] as any
+            : '#ddd', // placeholder — colorMap updates this for states/counties
+          'fill-opacity': 0.95,
+        },
+      })
+      // Selected outline
       m.addLayer({
         id: `selected-${sl}`,
         type: 'line',
@@ -628,6 +663,7 @@ async function setLevel(level: 'states' | 'counties' | 'cities') {
     const vis = (lvl === level || lvl === 'states') ? 'visible' : 'none'
     map.setLayoutProperty(`highlight-${sl}`, 'visibility', vis)
     map.setLayoutProperty(`highlight-inner-${sl}`, 'visibility', vis)
+    map.setLayoutProperty(`selected-fill-${sl}`, 'visibility', vis)
     map.setLayoutProperty(`selected-${sl}`, 'visibility', vis)
     map.setLayoutProperty(`selected-inner-${sl}`, 'visibility', vis)
   }
@@ -684,10 +720,21 @@ let selectedFeature: { id: string; sourceLayer: string } | null = null
 
 function clearSelection() {
   if (selectedFeature) {
-    // Clear filter-based selection highlight
     const sl = selectedFeature.sourceLayer
+    map.setFilter(`selected-fill-${sl}`, ['==', ['get', 'FIPS'], ''])
     map.setFilter(`selected-${sl}`, ['==', ['get', 'FIPS'], ''])
     map.setFilter(`selected-inner-${sl}`, ['==', ['get', 'FIPS'], ''])
+
+    // Restore fill opacity
+    const fillLayer = sl === 'places' ? 'places-fill' : `${sl}-fill`
+    if (sl === 'places') {
+      map.setPaintProperty(fillLayer, 'fill-opacity', ['interpolate', ['linear'], ['zoom'],
+        3, 0.85, 9, 0.85, 10, 0,
+      ])
+    } else {
+      map.setPaintProperty(fillLayer, 'fill-opacity', 0.8)
+    }
+
     selectedFeature = null
   }
 }
@@ -749,6 +796,29 @@ function selectFeature(fips: string, _lngLat: maplibregl.LngLat) {
   // Highlight via filter (robust — doesn't depend on tile-loaded feature-state)
   clearSelection()
   const sourceLayer = level === 'cities' ? 'places' : 'counties'
+
+  // Dim the active fill layer
+  const fillLayer = sourceLayer === 'places' ? 'places-fill' : `${sourceLayer}-fill`
+  if (sourceLayer === 'places') {
+    map.setPaintProperty(fillLayer, 'fill-opacity', ['interpolate', ['linear'], ['zoom'],
+      3, 0.25, 9, 0.25, 10, 0,
+    ])
+  } else {
+    map.setPaintProperty(fillLayer, 'fill-opacity', 0.25)
+  }
+
+  // Show selected feature at full brightness + outline
+  map.setFilter(`selected-fill-${sourceLayer}`, ['==', ['get', 'FIPS'], fips])
+  // Set the selected-fill color to match the jurisdiction's score
+  if (sourceLayer !== 'places') {
+    // For states/counties: use the same color expression as colorMap
+    const scoreMatch: any[] = ['match', ['get', 'FIPS'], fips, jurisdiction.avg_nwi, 0]
+    map.setPaintProperty(`selected-fill-${sourceLayer}`, 'fill-color', [
+      'step', scoreMatch,
+      '#e8e4e0', 0.1, '#e84830', 4.0, '#e8a030', 5.0, '#e8d030',
+      5.5, '#c8d868', 6.0, '#7ebf6e', 7.0, '#5a9a4a', 8.0, '#3d6b35',
+    ] as any)
+  }
   map.setFilter(`selected-${sourceLayer}`, ['==', ['get', 'FIPS'], fips])
   map.setFilter(`selected-inner-${sourceLayer}`, ['==', ['get', 'FIPS'], fips])
   selectedFeature = { id: fips, sourceLayer }
@@ -1367,7 +1437,7 @@ async function setView(view: 'map' | 'table') {
     buildTable(tableContainer, data, (fips) => {
       const j = data[fips]
       if (j) showPanel(j)
-    })
+    }, { level: currentLevel, incorporatedSet: incorporatedSet || undefined })
   }
 }
 
@@ -1378,6 +1448,7 @@ map = initMap()
 
 // Load pre-computed feature bounds
 fetch('/data/bounds.json').then(r => r.json()).then(d => { featureBounds = d })
+fetch('/data/incorporated.json').then(r => r.json()).then((d: string[]) => { incorporatedSet = new Set(d) })
 
 // Nav button clicks
 document.querySelectorAll('.geo-btn').forEach(btn => {
