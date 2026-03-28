@@ -218,6 +218,21 @@ body { height: 100vh; overflow: hidden; }
   color: var(--fg-tertiary);
 }
 
+.nwi-bar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--fg-secondary);
+}
+
+.nwi-bar-legend-item {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
 /* ─── Demographics ─── */
 .demo-section {
   margin-bottom: 20px;
@@ -281,6 +296,7 @@ body { height: 100vh; overflow: hidden; }
 
 .table-toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 8px;
   flex-shrink: 0;
@@ -316,6 +332,28 @@ body { height: 100vh; overflow: hidden; }
 .table-export-btn:hover {
   border-color: var(--accent);
   color: var(--fg);
+}
+
+.table-filter-select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.table-filter-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.table-status {
+  font-size: 11px;
+  color: var(--fg-tertiary);
+  padding: 4px 0;
+  white-space: nowrap;
 }
 
 .data-table {
@@ -588,9 +626,131 @@ body { height: 100vh; overflow: hidden; }
   margin-top: 2px;
 }
 
+/* ─── Jurisdiction View ─── */
+#jurisdiction-view {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.jv-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.jv-back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.jv-back:hover {
+  border-color: var(--fg-tertiary);
+  color: var(--fg);
+}
+
+.jv-body {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 40px 32px 60px;
+}
+
+.jv-name {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 28px;
+  line-height: 1.2;
+}
+
+.jv-stats {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+.jv-stats .stat-card {
+  min-width: 120px;
+}
+
+.jv-nwi-bar {
+  margin-bottom: 40px;
+}
+
+.jv-nwi-bar .nwi-bar-container {
+  height: 28px;
+  border-radius: 5px;
+}
+
+.jv-nwi-bar .nwi-bar-segment {
+  font-size: 11px;
+}
+
+.jv-demo-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  align-items: center;
+}
+
+.jv-demo-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.jv-demo-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.jv-demo-card .demo-title {
+  margin-bottom: 14px;
+}
+
+.jv-demo-card .demo-label {
+  width: 95px;
+}
+
+.jv-link {
+  font-size: 12px;
+  color: var(--fg-tertiary);
+  text-decoration: none;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.jv-link:hover {
+  color: var(--fg);
+}
+
 /* ─── Responsive ─── */
 @media (max-width: 768px) {
   #main { flex-direction: column; }
   #panel { width: 100%; height: 40vh; border-left: none; border-top: 1px solid var(--border); }
   #map-container { height: 60vh; }
+
+  .jv-body { padding: 24px 16px 40px; }
+  .jv-name { font-size: 22px; }
+  .jv-stats { flex-wrap: wrap; }
+  .jv-demo-grid { grid-template-columns: 1fr; }
 }

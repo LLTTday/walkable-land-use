@@ -113,6 +113,9 @@ def load_block_groups(conn):
                 d[name] = int(to_float(val))
             else:
                 d[name] = to_float(val)
+        # Exclude Puerto Rico — NWI methodology doesn't measure its built environment well
+        if d.get("geoid10", "")[:2] == "72":
+            continue
         # Compute carpool
         d["_carpool"] = d.get("b08301_002e", 0) - d.get("b08301_003e", 0)
         # Compute Hispanic
@@ -284,9 +287,12 @@ def aggregate_cities_area_weighted(records):
             weighted = {
                 "geoid10": geoid,
                 "nwi": bg["nwi"],
+                "nwi_scaled_10": bg["nwi_scaled_10"],  # rate, not quantity — don't area-weight
                 "state_name": bg["state_name"],
             }
             for k in num_keys:
+                if k == "nwi_scaled_10":
+                    continue  # already set above, unweighted
                 weighted[k] = bg[k] * frac
             # Also weight computed fields
             weighted["_carpool"] = bg.get("_carpool", 0) * frac

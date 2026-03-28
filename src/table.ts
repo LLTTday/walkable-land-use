@@ -35,9 +35,19 @@ export function buildTable(
     avg_nwi: j.avg_nwi,
   }))
 
+  // Extract unique states from names (e.g., "Portland, Oregon" → "Oregon")
+  const stateSet = new Set<string>()
+  for (const r of rows) {
+    const parts = r.name.split(', ')
+    if (parts.length >= 2) stateSet.add(parts[parts.length - 1])
+  }
+  const stateList = Array.from(stateSet).sort()
+
   let sortKey: SortKey = 'avg_nwi'
   let sortDir: SortDir = 'desc'
   let filter = ''
+  let minPop = 0
+  let stateFilter = ''
 
   const wrapper = document.createElement('div')
   wrapper.className = 'table-wrapper'
@@ -52,14 +62,46 @@ export function buildTable(
   search.className = 'table-search'
   search.addEventListener('input', () => {
     filter = search.value.toLowerCase()
+    visibleCount = PAGE_SIZE
     render()
   })
   toolbar.appendChild(search)
 
+  // State filter
+  if (stateList.length > 1) {
+    const stateSelect = document.createElement('select')
+    stateSelect.className = 'table-filter-select'
+    stateSelect.innerHTML = '<option value="">All states</option>' +
+      stateList.map(s => `<option value="${s}">${s}</option>`).join('')
+    stateSelect.addEventListener('change', () => {
+      stateFilter = stateSelect.value
+      visibleCount = PAGE_SIZE
+      render()
+    })
+    toolbar.appendChild(stateSelect)
+  }
+
+  // Population filter
+  const popSelect = document.createElement('select')
+  popSelect.className = 'table-filter-select'
+  popSelect.innerHTML = `
+    <option value="0">All populations</option>
+    <option value="1000">Pop. 1,000+</option>
+    <option value="10000">Pop. 10,000+</option>
+    <option value="50000">Pop. 50,000+</option>
+    <option value="100000">Pop. 100,000+</option>
+  `
+  popSelect.addEventListener('change', () => {
+    minPop = parseInt(popSelect.value)
+    visibleCount = PAGE_SIZE
+    render()
+  })
+  toolbar.appendChild(popSelect)
+
   const exportBtn = document.createElement('button')
   exportBtn.className = 'table-export-btn'
   exportBtn.textContent = 'Export CSV'
-  exportBtn.addEventListener('click', () => exportCsv(rows, filter, sortKey, sortDir))
+  exportBtn.addEventListener('click', () => exportCsv(getFiltered(), sortKey, sortDir))
   toolbar.appendChild(exportBtn)
 
   wrapper.appendChild(toolbar)
@@ -72,12 +114,24 @@ export function buildTable(
   scrollDiv.appendChild(table)
   wrapper.appendChild(scrollDiv)
 
-  function render() {
-    // Filter
+  const PAGE_SIZE = 100
+  let visibleCount = PAGE_SIZE
+
+  // Status line below toolbar
+  const status = document.createElement('div')
+  status.className = 'table-status'
+  toolbar.appendChild(status)
+
+  function getFiltered(): JurisdictionRow[] {
     let filtered = rows
-    if (filter) {
-      filtered = rows.filter(r => r.name.toLowerCase().includes(filter))
-    }
+    if (filter) filtered = filtered.filter(r => r.name.toLowerCase().includes(filter))
+    if (minPop > 0) filtered = filtered.filter(r => r.population >= minPop)
+    if (stateFilter) filtered = filtered.filter(r => r.name.endsWith(`, ${stateFilter}`))
+    return filtered
+  }
+
+  function render() {
+    let filtered = getFiltered()
 
     // Sort
     filtered.sort((a, b) => {
@@ -89,6 +143,16 @@ export function buildTable(
       return 0
     })
 
+    const visible = filtered.slice(0, visibleCount)
+    const totalCount = filtered.length
+
+    // Status
+    if (totalCount > visibleCount) {
+      status.textContent = `Showing ${visibleCount.toLocaleString()} of ${totalCount.toLocaleString()}`
+    } else {
+      status.textContent = `${totalCount.toLocaleString()} result${totalCount !== 1 ? 's' : ''}`
+    }
+
     let html = '<thead><tr>'
     html += `<th class="sortable th-rank" data-key="avg_nwi">#</th>`
     html += `<th class="sortable th-name" data-key="name">Name</th>`
@@ -97,7 +161,7 @@ export function buildTable(
     html += `<th class="th-dist">Distribution</th>`
     html += '</tr></thead><tbody>'
 
-    filtered.forEach((row, i) => {
+    visible.forEach((row, i) => {
       const total = row.population || 1
       const pcts = [
         row.least / total * 100,
@@ -106,7 +170,9 @@ export function buildTable(
         row.most / total * 100,
       ]
 
-      const rank = sortKey === 'avg_nwi' && sortDir === 'desc' ? i + 1 : ''
+      const rank = sortKey !== 'name'
+        ? (sortDir === 'desc' ? i + 1 : totalCount - i)
+        : ''
 
       html += `<tr data-fips="${row.fips}">`
       html += `<td class="cell-rank">${rank}</td>`
@@ -155,6 +221,17 @@ export function buildTable(
     }
   }
 
+  // Scroll to load more
+  scrollDiv.addEventListener('scroll', () => {
+    const { scrollTop, scrollHeight, clientHeight } = scrollDiv
+    if (scrollHeight - scrollTop - clientHeight < 200) {
+      if (visibleCount < getFiltered().length) {
+        visibleCount += PAGE_SIZE
+        render()
+      }
+    }
+  })
+
   render()
   container.innerHTML = ''
   container.appendChild(wrapper)
@@ -168,11 +245,8 @@ function formatNum(n: number): string {
   return n.toLocaleString()
 }
 
-function exportCsv(rows: JurisdictionRow[], filter: string, sortKey: SortKey, sortDir: SortDir) {
-  let filtered = rows
-  if (filter) {
-    filtered = rows.filter(r => r.name.toLowerCase().includes(filter))
-  }
+function exportCsv(filtered: JurisdictionRow[], sortKey: SortKey, sortDir: SortDir) {
+  filtered = [...filtered]
   filtered.sort((a, b) => {
     let va: any = a[sortKey]
     let vb: any = b[sortKey]
@@ -182,10 +256,10 @@ function exportCsv(rows: JurisdictionRow[], filter: string, sortKey: SortKey, so
     return 0
   })
 
-  const header = 'Name,Population,Avg Walkability Index,Least Walkable Pop,Below Average Pop,Above Average Pop,Most Walkable Pop'
+  const header = 'FIPS,Name,Population,Avg Walkability Index,Least Walkable Pop,Below Average Pop,Above Average Pop,Most Walkable Pop'
   const csvRows = filtered.map(r => {
     const name = r.name.includes(',') ? `"${r.name}"` : r.name
-    return `${name},${r.population},${r.avg_nwi.toFixed(2)},${r.least},${r.below},${r.above},${r.most}`
+    return `${r.fips},${name},${r.population},${r.avg_nwi.toFixed(2)},${r.least},${r.below},${r.above},${r.most}`
   })
 
   const blob = new Blob([header + '\n' + csvRows.join('\n')], { type: 'text/csv' })

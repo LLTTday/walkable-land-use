@@ -22,8 +22,8 @@ type DataSet = Record<string, Jurisdiction>
 // ─── Constants ───
 
 const NWI_COLORS = ['#e84830', '#e8b830', '#7ebf6e', '#3d6b35']
-const _NWI_LABELS = ['Least Walkable', 'Below Average', 'Above Average', 'Most Walkable']
-void _NWI_LABELS // used in future panel work
+const NWI_LABELS: readonly string[] = ['Least Walkable', 'Below Average', 'Above Average', 'Most Walkable']
+void NWI_LABELS
 
 // Choropleth color stops — avg_nwi on 1-10 scale
 const CHOROPLETH_STOPS: [number, string][] = [
@@ -73,7 +73,94 @@ const STATE_BOUNDS: Record<string, [[number, number], [number, number]]> = {
   '49': [[-114.1, 37.0], [-109.0, 42.0]], '50': [[-73.4, 42.7], [-71.5, 45.0]],
   '51': [[-83.7, 36.5], [-75.2, 39.5]], '53': [[-124.7, 45.5], [-116.9, 49.0]],
   '54': [[-82.6, 37.2], [-77.7, 40.6]], '55': [[-92.9, 42.5], [-86.8, 47.1]],
-  '56': [[-111.1, 41.0], [-104.1, 45.0]], '72': [[-67.3, 17.9], [-65.6, 18.5]],
+  '56': [[-111.1, 41.0], [-104.1, 45.0]],
+}
+
+// ─── Slug infrastructure ───
+
+const FIPS_TO_ABBREV: Record<string, string> = {
+  '01': 'al', '02': 'ak', '04': 'az', '05': 'ar', '06': 'ca',
+  '08': 'co', '09': 'ct', '10': 'de', '11': 'dc', '12': 'fl',
+  '13': 'ga', '15': 'hi', '16': 'id', '17': 'il', '18': 'in',
+  '19': 'ia', '20': 'ks', '21': 'ky', '22': 'la', '23': 'me',
+  '24': 'md', '25': 'ma', '26': 'mi', '27': 'mn', '28': 'ms',
+  '29': 'mo', '30': 'mt', '31': 'ne', '32': 'nv', '33': 'nh',
+  '34': 'nj', '35': 'nm', '36': 'ny', '37': 'nc', '38': 'nd',
+  '39': 'oh', '40': 'ok', '41': 'or', '42': 'pa', '44': 'ri',
+  '45': 'sc', '46': 'sd', '47': 'tn', '48': 'tx', '49': 'ut',
+  '50': 'vt', '51': 'va', '53': 'wa', '54': 'wv', '55': 'wi',
+  '56': 'wy',
+}
+
+// slug → { level, key } lookup, built when data loads
+const slugMaps: Record<string, Record<string, string>> = {
+  state: {},
+  county: {},
+  city: {},
+}
+
+function toSlug(text: string): string {
+  return text.toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+function buildSlugMap(level: 'states' | 'counties' | 'cities', data: DataSet) {
+  const singularLevel = level === 'states' ? 'state' : level === 'counties' ? 'county' : 'city'
+  const map: Record<string, string> = {}
+
+  for (const [key, j] of Object.entries(data)) {
+    let slug: string
+    if (level === 'states') {
+      slug = toSlug(j.name)
+    } else {
+      // "Dallas County, Texas" → "dallas-county-tx"
+      // "Portland, Oregon" → "portland-or"
+      const parts = j.name.split(', ')
+      const namePart = toSlug(parts[0])
+      const stateFips = level === 'cities' ? key.split('|')[1] : key.slice(0, 2)
+      const stateAbbrev = FIPS_TO_ABBREV[stateFips] || ''
+      slug = stateAbbrev ? `${namePart}-${stateAbbrev}` : namePart
+    }
+
+    // Handle collisions by appending a counter
+    if (map[slug]) {
+      let i = 2
+      while (map[`${slug}-${i}`]) i++
+      slug = `${slug}-${i}`
+    }
+    map[slug] = key
+  }
+
+  slugMaps[singularLevel] = map
+}
+
+function getSlugForKey(level: 'states' | 'counties' | 'cities', key: string): string {
+  const singularLevel = level === 'states' ? 'state' : level === 'counties' ? 'county' : 'city'
+  const map = slugMaps[singularLevel]
+  for (const [slug, k] of Object.entries(map)) {
+    if (k === key) return slug
+  }
+  return key // fallback to key
+}
+
+function resolveSlug(singularLevel: string, slugOrFips: string): { level: 'states' | 'counties' | 'cities'; key: string } | null {
+  const levelMap: Record<string, 'states' | 'counties' | 'cities'> = {
+    state: 'states', county: 'counties', city: 'cities',
+  }
+  const dataLevel = levelMap[singularLevel]
+  if (!dataLevel) return null
+
+  const map = slugMaps[singularLevel]
+  // Try slug first
+  if (map[slugOrFips]) return { level: dataLevel, key: map[slugOrFips] }
+  // Try as FIPS/key directly
+  const data = dataCache[dataLevel]
+  if (data && data[slugOrFips]) return { level: dataLevel, key: slugOrFips }
+
+  return null
 }
 
 // ─── Data loading ───
@@ -83,6 +170,9 @@ async function loadData(level: string): Promise<DataSet> {
   const resp = await fetch(`/data/${level}.json`)
   const data: DataSet = await resp.json()
   dataCache[level] = data
+  if (['states', 'counties', 'cities'].includes(level)) {
+    buildSlugMap(level as 'states' | 'counties' | 'cities', data)
+  }
   return data
 }
 
@@ -199,8 +289,36 @@ function initMap(): maplibregl.Map {
 
     // ─── Highlight layers driven by feature-state ───
     for (const sl of ['states', 'counties', 'places'] as const) {
+      // Bright outline for selection/hover — visible against any choropleth color
       m.addLayer({
         id: `highlight-${sl}`,
+        type: 'line',
+        source: 'boundaries',
+        'source-layer': sl,
+        paint: {
+          'line-color': [
+            'case',
+            ['boolean', ['feature-state', 'selected'], false], '#ffffff',
+            ['boolean', ['feature-state', 'hover'], false], '#ffffff',
+            'transparent',
+          ],
+          'line-width': [
+            'case',
+            ['boolean', ['feature-state', 'selected'], false], 3,
+            ['boolean', ['feature-state', 'hover'], false], 2,
+            0,
+          ],
+          'line-opacity': [
+            'case',
+            ['boolean', ['feature-state', 'selected'], false], 1,
+            ['boolean', ['feature-state', 'hover'], false], 0.7,
+            0,
+          ],
+        },
+      })
+      // Dark inner stroke for contrast on light fills
+      m.addLayer({
+        id: `highlight-inner-${sl}`,
         type: 'line',
         source: 'boundaries',
         'source-layer': sl,
@@ -208,16 +326,15 @@ function initMap(): maplibregl.Map {
           'line-color': '#1a1a1a',
           'line-width': [
             'case',
-            ['boolean', ['feature-state', 'selected'], false], 3.5,
-            ['boolean', ['feature-state', 'hover'], false], 2,
+            ['boolean', ['feature-state', 'selected'], false], 1.5,
             0,
           ],
           'line-opacity': [
             'case',
-            ['boolean', ['feature-state', 'selected'], false], 0.9,
-            ['boolean', ['feature-state', 'hover'], false], 0.6,
+            ['boolean', ['feature-state', 'selected'], false], 0.8,
             0,
           ],
+          'line-offset': -2,
         },
       })
     }
@@ -257,20 +374,7 @@ function initMap(): maplibregl.Map {
       },
     })
 
-    m.addLayer({
-      id: 'bg-line',
-      type: 'line',
-      source: 'blockgroups',
-      'source-layer': 'blockgroups',
-      minzoom: 9,
-      paint: {
-        'line-color': 'rgba(255,255,255,0.3)',
-        'line-width': 0.5,
-      },
-    })
-
-    // Labels removed — duplicating at multiple zoom levels.
-    // TODO: revisit with proper label deduplication or a base map tile source.
+    // No BG boundary lines — fill-only choropleth is cleaner
 
     // Load initial data, color the map, show national stats
     setLevel('states')
@@ -281,12 +385,6 @@ function initMap(): maplibregl.Map {
 
     m.on('click', (e) => {
       if (isAnimating) return
-
-      // If block groups are visible and click hit one, let the BG popup handle it
-      if (m.getZoom() >= 7) {
-        const bgHit = m.queryRenderedFeatures(e.point, { layers: ['bg-fill'] })
-        if (bgHit.length) return
-      }
 
       // Query the active layer only
       const activeLayer = currentLevel === 'states' ? 'states-fill'
@@ -360,47 +458,32 @@ function initMap(): maplibregl.Map {
       },
     }
 
-    // ─── Block group popup (zoom 7+) ───
-    let bgPopup: maplibregl.Popup | null = null
+    // ─── Block group hover tooltip (zoom 7+) ───
+    let bgTooltip: maplibregl.Popup | null = null
 
-    m.on('click', 'bg-fill', (e) => {
-      if (isAnimating || !e.features?.length) return
+    m.on('mousemove', 'bg-fill', (e) => {
+      if (!e.features?.length) return
       const props = e.features[0].properties!
       const score = props.s as number
-      const pop = props.p as number | undefined
-      const geoid = props.g as string | undefined
 
-      // Derive NWI level label from score
       const levelLabel = score >= 6 ? 'Most Walkable'
         : score >= 5 ? 'Above Average'
         : score >= 4 ? 'Below Average'
         : 'Least Walkable'
-
-      // Derive NWI level index for color
       const levelIdx = score >= 6 ? 3 : score >= 5 ? 2 : score >= 4 ? 1 : 0
 
-      let html = '<div class="bg-popup">'
-      html += `<div class="bg-popup-score" style="border-left:3px solid ${NWI_COLORS[levelIdx]}">`
-      html += `<strong>${score.toFixed(1)}</strong> <span class="bg-popup-label">${levelLabel}</span>`
-      html += '</div>'
-      if (pop != null) {
-        html += `<div class="bg-popup-row">Pop. ${pop.toLocaleString()}</div>`
-      }
-      if (geoid) {
-        html += `<div class="bg-popup-geoid">${geoid}</div>`
-      }
-      html += '</div>'
+      const html = `<div class="bg-popup"><div class="bg-popup-score" style="border-left:3px solid ${NWI_COLORS[levelIdx]}"><strong>${score.toFixed(1)}</strong> <span class="bg-popup-label">${levelLabel}</span></div></div>`
 
-      if (bgPopup) bgPopup.remove()
-      bgPopup = new maplibregl.Popup({ closeButton: true, maxWidth: '220px' })
-        .setLngLat(e.lngLat)
-        .setHTML(html)
-        .addTo(m)
+      if (!bgTooltip) {
+        bgTooltip = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: '180px', offset: 12 })
+          .addTo(m)
+      }
+      bgTooltip.setLngLat(e.lngLat).setHTML(html)
     })
 
-    // Pointer cursor on block groups at high zoom
-    m.on('mouseenter', 'bg-fill', () => { m.getCanvas().style.cursor = 'pointer' })
-    m.on('mouseleave', 'bg-fill', () => { m.getCanvas().style.cursor = '' })
+    m.on('mouseleave', 'bg-fill', () => {
+      if (bgTooltip) { bgTooltip.remove(); bgTooltip = null }
+    })
   })
 
   return m
@@ -620,7 +703,24 @@ function showPanel(j: Jurisdiction) {
   document.getElementById('panel-empty')!.classList.add('hidden')
   document.getElementById('panel-content')!.classList.remove('hidden')
 
-  document.getElementById('panel-name')!.textContent = j.name
+  const nameEl = document.getElementById('panel-name')!
+  nameEl.textContent = j.name
+
+  // Add "Full View →" link (only for real jurisdictions, not national)
+  const existingLink = nameEl.querySelector('.jv-link')
+  if (existingLink) existingLink.remove()
+  const slug = findJurisdictionSlug(j)
+  if (slug) {
+    const link = document.createElement('a')
+    link.className = 'jv-link'
+    link.textContent = ' Full View →'
+    link.href = `#${slug}`
+    link.addEventListener('click', (e) => {
+      e.preventDefault()
+      window.location.hash = slug
+    })
+    nameEl.appendChild(link)
+  }
 
   // Summary stats
   const abovePct = j.population > 0
@@ -648,9 +748,9 @@ function showPanel(j: Jurisdiction) {
   renderDemoPanel(j)
 }
 
-function renderNwiBar(j: Jurisdiction) {
+function buildNwiBarHtml(j: Jurisdiction): string {
   const total = j.population
-  if (total === 0) return
+  if (total === 0) return ''
 
   let html = '<div class="nwi-bar-container">'
   for (let i = 0; i < 4; i++) {
@@ -662,8 +762,16 @@ function renderNwiBar(j: Jurisdiction) {
     }
   }
   html += '</div>'
-  html += '<div class="nwi-bar-labels"><span>Least Walkable</span><span>Most Walkable</span></div>'
-  document.getElementById('nwi-bar')!.innerHTML = html
+  html += '<div class="nwi-bar-legend">'
+  for (let i = 0; i < 4; i++) {
+    html += `<span class="nwi-bar-legend-item"><span class="nwi-dot" style="background:${NWI_COLORS[i]}"></span>${NWI_LEVEL_LABELS[i]}</span>`
+  }
+  html += '</div>'
+  return html
+}
+
+function renderNwiBar(j: Jurisdiction) {
+  document.getElementById('nwi-bar')!.innerHTML = buildNwiBarHtml(j)
 }
 
 // ─── Unified demographic panel ───
@@ -679,7 +787,7 @@ const DEMO_SECTIONS = [
 ]
 
 let currentDemoCategory = 0
-let currentDemoView: 'total' | 'by_nwi' | 'nwi_by' = 'total'
+let currentDemoView: 'total' | 'by_nwi' | 'nwi_by' = 'by_nwi'
 let currentJurisdiction: Jurisdiction | null = null
 
 function renderDemoPanel(j: Jurisdiction) {
@@ -719,11 +827,18 @@ function renderDemoPanel(j: Jurisdiction) {
   renderDemoContent()
 }
 
+const DEMO_MIN_POP = 500
+
 function renderDemoContent() {
   const j = currentJurisdiction
   if (!j) return
   const content = document.getElementById('demo-content')!
   const section = DEMO_SECTIONS[currentDemoCategory]
+
+  if (j.population < DEMO_MIN_POP) {
+    content.innerHTML = '<p class="demo-note">Demographics not shown for jurisdictions under 500 population — area-weighted estimates are unreliable at this scale.</p>'
+    return
+  }
 
   if (currentDemoView === 'total') {
     renderTotalView(content, j, section)
@@ -892,6 +1007,148 @@ function formatPop(n: number): string {
   return String(n)
 }
 
+// ─── Jurisdiction view ───
+
+function findJurisdictionSlug(j: Jurisdiction): string | null {
+  // Search all loaded datasets for this jurisdiction
+  for (const level of ['states', 'counties', 'cities'] as const) {
+    const data = dataCache[level]
+    if (!data) continue
+    for (const [key, val] of Object.entries(data)) {
+      if (val === j) {
+        const singularLevel = level === 'states' ? 'state' : level === 'counties' ? 'county' : 'city'
+        return `${singularLevel}/${getSlugForKey(level, key)}`
+      }
+    }
+  }
+  return null
+}
+
+let jvCurrentView: 'total' | 'by_nwi' | 'nwi_by' = 'by_nwi'
+
+function showJurisdictionView(level: 'states' | 'counties' | 'cities', key: string, j: Jurisdiction) {
+  const jv = document.getElementById('jurisdiction-view')!
+  const header = document.getElementById('header')!
+  const main = document.getElementById('main')!
+
+  header.classList.add('hidden')
+  main.classList.add('hidden')
+  jv.classList.remove('hidden')
+
+  jvCurrentView = 'by_nwi' // reset to default
+
+  const abovePct = j.population > 0
+    ? Math.round(((j.by_nwi['2']?.population || 0) + (j.by_nwi['3']?.population || 0)) / j.population * 100)
+    : 0
+
+  const nwiBarHtml = buildNwiBarHtml(j)
+
+  jv.innerHTML = `
+    <div class="jv-header">
+      <button class="jv-back" id="jv-back-btn">← Back to Map</button>
+      <a href="https://americawalks.org" id="jv-logo" target="_blank" rel="noopener">
+        <img src="/aw-logo.png" alt="America Walks" style="height:28px" />
+      </a>
+    </div>
+    <div class="jv-body">
+      <h1 class="jv-name">${j.name}</h1>
+      <div class="jv-stats">
+        <div class="stat-card">
+          <div class="stat-value">${formatPop(j.population)}</div>
+          <div class="stat-label">Population</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${j.avg_nwi.toFixed(1)}</div>
+          <div class="stat-label">Avg Walkability</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${abovePct}%</div>
+          <div class="stat-label">Above Avg+</div>
+        </div>
+      </div>
+      <div class="jv-nwi-bar">${nwiBarHtml}</div>
+      <div class="jv-demo-controls">
+        <div class="demo-view-toggle">
+          <button class="demo-view-btn" data-jvview="total">Overall</button>
+          <button class="demo-view-btn active" data-jvview="by_nwi">By WI Level</button>
+          <button class="demo-view-btn" data-jvview="nwi_by">WI by Group</button>
+        </div>
+      </div>
+      <div class="jv-demo-grid" id="jv-demo-grid"></div>
+    </div>
+  `
+
+  // Wire back button
+  document.getElementById('jv-back-btn')!.addEventListener('click', () => {
+    hideJurisdictionView()
+    // Navigate to explorer with this jurisdiction's level active
+    setLevel(level)
+    const data = dataCache[level]
+    if (data && data[key]) showPanel(data[key])
+    updateHash(level, key)
+  })
+
+  // Wire view toggle
+  jv.querySelectorAll('[data-jvview]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      jvCurrentView = (btn as HTMLElement).dataset.jvview as typeof jvCurrentView
+      jv.querySelectorAll('[data-jvview]').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+      renderJvDemoGrid(j)
+    })
+  })
+
+  renderJvDemoGrid(j)
+}
+
+function renderJvDemoGrid(j: Jurisdiction) {
+  const grid = document.getElementById('jv-demo-grid')!
+
+  if (j.population < DEMO_MIN_POP) {
+    grid.innerHTML = '<p class="demo-note" style="grid-column:1/-1">Demographics not shown for jurisdictions under 500 population — area-weighted estimates are unreliable at this scale.</p>'
+    return
+  }
+
+  let html = ''
+
+  for (const section of DEMO_SECTIONS) {
+    html += `<div class="jv-demo-card">`
+    html += `<div class="demo-title">${section.title}</div>`
+    html += `<div class="jv-demo-content" data-section="${section.key}"></div>`
+    html += `</div>`
+  }
+
+  grid.innerHTML = html
+
+  // Render each section
+  grid.querySelectorAll('.jv-demo-content').forEach(el => {
+    const key = (el as HTMLElement).dataset.section!
+    const section = DEMO_SECTIONS.find(s => s.key === key)!
+    if (jvCurrentView === 'total') {
+      renderTotalView(el as HTMLElement, j, section)
+    } else if (jvCurrentView === 'by_nwi') {
+      renderByNwiView(el as HTMLElement, j, section)
+    } else {
+      renderNwiByView(el as HTMLElement, j, section)
+    }
+  })
+}
+
+function hideJurisdictionView() {
+  const jv = document.getElementById('jurisdiction-view')!
+  const header = document.getElementById('header')!
+  const main = document.getElementById('main')!
+
+  jv.classList.add('hidden')
+  header.classList.remove('hidden')
+  main.classList.remove('hidden')
+
+  // Resize map since it was hidden
+  if (map) {
+    map.resize()
+  }
+}
+
 // ─── URL routing ───
 
 function updateHash(level?: string, fips?: string) {
@@ -901,32 +1158,54 @@ function updateHash(level?: string, fips?: string) {
 
 async function handleHash() {
   const hash = window.location.hash.slice(1) // remove #
-  if (!hash) return
+  if (!hash) {
+    hideJurisdictionView()
+    return
+  }
 
   const parts = hash.split('/')
-  const level = parts[0] as 'states' | 'counties' | 'cities'
-  const fips = parts[1]
+  const level = parts[0]
+  const slugOrFips = parts[1]
 
-  if (level === 'counties' && fips && fips.length === 2) {
+  // Jurisdiction view routes (singular: state/, county/, city/)
+  if (['state', 'county', 'city'].includes(level) && slugOrFips) {
+    const pluralLevel = level === 'state' ? 'states' : level === 'county' ? 'counties' : 'cities'
+    await loadData(pluralLevel) // ensure slug map is built
+    const resolved = resolveSlug(level, slugOrFips)
+    if (resolved) {
+      const data = await loadData(resolved.level)
+      const j = data[resolved.key]
+      if (j) {
+        showJurisdictionView(resolved.level, resolved.key, j)
+        return
+      }
+    }
+  }
+
+  // Explorer routes (plural: states, counties/, cities)
+  hideJurisdictionView()
+  const explorerLevel = level as 'states' | 'counties' | 'cities'
+
+  if (explorerLevel === 'counties' && slugOrFips && slugOrFips.length === 2) {
     // Drill into a state's counties
-    await drillDown(fips)
-  } else if (level === 'counties' && fips && fips.length === 5) {
+    await drillDown(slugOrFips)
+  } else if (explorerLevel === 'counties' && slugOrFips && slugOrFips.length === 5) {
     // Direct link to a county
     await setLevel('counties')
     const data = await loadData('counties')
-    const j = data[fips]
+    const j = data[slugOrFips]
     if (j) {
       showPanel(j)
       // Zoom to the state this county is in
-      const stateFips = fips.slice(0, 2)
+      const stateFips = slugOrFips.slice(0, 2)
       const bounds = STATE_BOUNDS[stateFips]
       if (bounds) map.fitBounds(bounds, { padding: 40 })
     }
-  } else if (['states', 'counties', 'cities'].includes(level)) {
-    await setLevel(level)
-    if (fips) {
-      const data = await loadData(level)
-      const j = data[fips]
+  } else if (['states', 'counties', 'cities'].includes(explorerLevel)) {
+    await setLevel(explorerLevel)
+    if (slugOrFips) {
+      const data = await loadData(explorerLevel)
+      const j = data[slugOrFips]
       if (j) showPanel(j)
     }
   }
