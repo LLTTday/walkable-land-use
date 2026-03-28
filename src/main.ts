@@ -1398,6 +1398,14 @@ document.querySelectorAll('.view-btn').forEach(btn => {
 // Info button
 document.getElementById('info-btn')!.addEventListener('click', showMethodology)
 
+// Convert path-based URLs to hash routes (for share card links)
+// /city/portland-or → #city/portland-or
+const _path = window.location.pathname
+if (/^\/(state|county|city)\//.test(_path)) {
+  window.location.hash = _path.slice(1)
+  history.replaceState(null, '', '/' + window.location.hash)
+}
+
 // Handle initial hash on load
 window.addEventListener('hashchange', handleHash)
 // Defer hash handling until map is loaded
