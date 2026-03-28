@@ -208,7 +208,7 @@ function initMap(): maplibregl.Map {
       url: import.meta.env.DEV
         ? 'pmtiles:///boundaries.pmtiles'
         : 'pmtiles:///tiles/boundaries.pmtiles',
-      promoteId: { states: 'FIPS', counties: 'FIPS', places: 'FIPS' },
+      promoteId: { states: 'FIPS', counties: 'FIPS', places: 'FIPS', places_points: 'FIPS' },
     })
 
     // State fill layer
@@ -263,29 +263,88 @@ function initMap(): maplibregl.Map {
       layout: { visibility: 'none' },
     })
 
-    // Places fill (hidden by default)
+    // ─── City dots (low zoom): progressive disclosure by population ───
+    // Visible at low zooms where polygons are too small to see,
+    // tippecanoe:minzoom controls when each dot appears in tiles
+    m.addLayer({
+      id: 'places-dots',
+      type: 'circle',
+      source: 'boundaries',
+      'source-layer': 'places_points',
+      maxzoom: 7,
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'],
+          3, 2,
+          5, 3,
+          7, 5,
+        ],
+        'circle-color': [
+          'step', ['get', 'nwi'],
+          '#e8e4e0',
+          0.1, '#e84830',
+          4.0, '#e8a030',
+          5.0, '#e8d030',
+          5.5, '#c8d868',
+          6.0, '#7ebf6e',
+          7.0, '#5a9a4a',
+          8.0, '#3d6b35',
+        ],
+        'circle-opacity': ['interpolate', ['linear'], ['zoom'],
+          5, 0.9,
+          7, 0,
+        ],
+        'circle-stroke-width': 0.5,
+        'circle-stroke-color': 'rgba(255,255,255,0.6)',
+        'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'],
+          5, 1,
+          7, 0,
+        ],
+      },
+      layout: { visibility: 'none' },
+    })
+
+    // ─── City polygon fills: colored by embedded nwi ───
+    // Visible from z4 all the way through, fading out as BGs take over
     m.addLayer({
       id: 'places-fill',
       type: 'fill',
       source: 'boundaries',
       'source-layer': 'places',
       paint: {
-        'fill-color': '#ddd',
-        'fill-opacity': 0.8,
+        'fill-color': [
+          'step', ['get', 'nwi'],
+          '#e8e4e0',
+          0.1, '#e84830',
+          4.0, '#e8a030',
+          5.0, '#e8d030',
+          5.5, '#c8d868',
+          6.0, '#7ebf6e',
+          7.0, '#5a9a4a',
+          8.0, '#3d6b35',
+        ],
+        'fill-opacity': ['interpolate', ['linear'], ['zoom'],
+          3, 0.85,
+          9, 0.85,
+          10, 0,
+        ],
       },
       layout: { visibility: 'none' },
     })
 
-    // Places outline — thickens at high zoom
+    // ─── City boundary outlines (z9+): thin lines over BG fills ───
     m.addLayer({
       id: 'places-line',
       type: 'line',
       source: 'boundaries',
       'source-layer': 'places',
+      minzoom: 9,
       paint: {
-        'line-color': ['interpolate', ['linear'], ['zoom'], 6, '#ffffff', 8, '#6b6560'],
-        'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.5, 8, 1.5],
-        'line-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0.6, 8, 0.8],
+        'line-color': '#4a4540',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 9, 0.5, 12, 1.5],
+        'line-opacity': ['interpolate', ['linear'], ['zoom'],
+          9, 0,
+          10, 0.7,
+        ],
       },
       layout: { visibility: 'none' },
     })
@@ -303,7 +362,7 @@ function initMap(): maplibregl.Map {
       type: 'fill',
       source: 'blockgroups',
       'source-layer': 'blockgroups',
-      minzoom: 7,
+      minzoom: 9,
       paint: {
         'fill-color': [
           'step', ['get', 's'],
@@ -316,18 +375,18 @@ function initMap(): maplibregl.Map {
           7.0, '#5a9a4a',
           8.0, '#3d6b35',
         ],
-        // Fade in as we zoom past the jurisdiction level
+        // Fade in as city fills fade out — seamless transition
         'fill-opacity': [
           'interpolate', ['linear'], ['zoom'],
-          7, 0,
-          8, 0.85,
+          9, 0,
+          10, 0.85,
         ],
       },
     })
 
     // No BG boundary lines — fill-only choropleth is cleaner
 
-    // ─── Highlight layers (on top of BG fills so they're always visible) ───
+    // ─── Hover highlight layers (feature-state driven) ───
     for (const sl of ['states', 'counties', 'places'] as const) {
       m.addLayer({
         id: `highlight-${sl}`,
@@ -335,21 +394,10 @@ function initMap(): maplibregl.Map {
         source: 'boundaries',
         'source-layer': sl,
         paint: {
-          'line-color': [
-            'case',
-            ['boolean', ['feature-state', 'selected'], false], '#1a1a1a',
-            ['boolean', ['feature-state', 'hover'], false], '#1a1a1a',
-            'transparent',
-          ],
-          'line-width': [
-            'case',
-            ['boolean', ['feature-state', 'selected'], false], 4,
-            ['boolean', ['feature-state', 'hover'], false], 2.5,
-            0,
-          ],
+          'line-color': '#1a1a1a',
+          'line-width': ['case', ['boolean', ['feature-state', 'hover'], false], 2.5, 0],
         },
       })
-      // White inner line for double-stroke contrast
       m.addLayer({
         id: `highlight-inner-${sl}`,
         type: 'line',
@@ -357,13 +405,28 @@ function initMap(): maplibregl.Map {
         'source-layer': sl,
         paint: {
           'line-color': '#ffffff',
-          'line-width': [
-            'case',
-            ['boolean', ['feature-state', 'selected'], false], 2,
-            ['boolean', ['feature-state', 'hover'], false], 1,
-            0,
-          ],
+          'line-width': ['case', ['boolean', ['feature-state', 'hover'], false], 1, 0],
         },
+      })
+    }
+
+    // ─── Selection highlight layers (filter-driven — no feature-state dependency) ───
+    for (const sl of ['states', 'counties', 'places'] as const) {
+      m.addLayer({
+        id: `selected-${sl}`,
+        type: 'line',
+        source: 'boundaries',
+        'source-layer': sl,
+        filter: ['==', ['get', 'FIPS'], ''],
+        paint: { 'line-color': '#1a1a1a', 'line-width': 4 },
+      })
+      m.addLayer({
+        id: `selected-inner-${sl}`,
+        type: 'line',
+        source: 'boundaries',
+        'source-layer': sl,
+        filter: ['==', ['get', 'FIPS'], ''],
+        paint: { 'line-color': '#ffffff', 'line-width': 2 },
       })
     }
 
@@ -377,12 +440,14 @@ function initMap(): maplibregl.Map {
     m.on('click', (e) => {
       if (isAnimating) return
 
-      // Query the active layer only
-      const activeLayer = currentLevel === 'states' ? 'states-fill'
-        : currentLevel === 'counties' ? 'counties-fill'
-        : 'places-fill'
-
-      const features = m.queryRenderedFeatures(e.point, { layers: [activeLayer] })
+      // Query the active layer — for cities, try both dots and polygons
+      let features: maplibregl.MapGeoJSONFeature[]
+      if (currentLevel === 'cities') {
+        features = m.queryRenderedFeatures(e.point, { layers: ['places-dots', 'places-fill'] })
+      } else {
+        const activeLayer = currentLevel === 'states' ? 'states-fill' : 'counties-fill'
+        features = m.queryRenderedFeatures(e.point, { layers: [activeLayer] })
+      }
       if (!features.length) return
 
       const fips = features[0].properties!.FIPS as string
@@ -401,9 +466,10 @@ function initMap(): maplibregl.Map {
       'states-fill': 'states',
       'counties-fill': 'counties',
       'places-fill': 'places',
+      'places-dots': 'places_points',
     }
 
-    for (const fillLayer of ['states-fill', 'counties-fill', 'places-fill']) {
+    for (const fillLayer of ['states-fill', 'counties-fill', 'places-fill', 'places-dots']) {
       const sl = sourceLayerMap[fillLayer]
 
       m.on('mouseenter', fillLayer, () => { m.getCanvas().style.cursor = 'pointer' })
@@ -475,6 +541,45 @@ function initMap(): maplibregl.Map {
     m.on('mouseleave', 'bg-fill', () => {
       if (bgTooltip) { bgTooltip.remove(); bgTooltip = null }
     })
+
+    // ─── City/county hover tooltip ───
+    let featureTooltip: maplibregl.Popup | null = null
+
+    for (const layerId of ['places-fill', 'places-dots', 'counties-fill']) {
+      m.on('mousemove', layerId, (e) => {
+        if (!e.features?.length) return
+        const props = e.features[0].properties!
+        const fips = props.FIPS as string
+
+        // Look up name + score from loaded data
+        const level = layerId.startsWith('places') || layerId === 'places-dots' ? 'cities' : 'counties'
+        const data = dataCache[level]
+        const j = data?.[fips]
+
+        // Fall back to tile properties if data not loaded yet
+        const name = j?.name || props.NAME as string
+        const nwi = j?.avg_nwi ?? (props.nwi as number)
+        if (!name) return
+
+        const levelLabel = nwi >= 6 ? 'Most Walkable'
+          : nwi >= 5 ? 'Above Average'
+          : nwi >= 4 ? 'Below Average'
+          : 'Least Walkable'
+        const levelIdx = nwi >= 6 ? 3 : nwi >= 5 ? 2 : nwi >= 4 ? 1 : 0
+
+        const html = `<div class="bg-popup"><strong>${name}</strong><div class="bg-popup-score" style="border-left:3px solid ${NWI_COLORS[levelIdx]}"><strong>${nwi.toFixed(1)}</strong> <span class="bg-popup-label">${levelLabel}</span></div></div>`
+
+        if (!featureTooltip) {
+          featureTooltip = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: '240px', offset: 12, className: 'bg-tooltip' })
+            .addTo(m)
+        }
+        featureTooltip.setLngLat(e.lngLat).setHTML(html)
+      })
+
+      m.on('mouseleave', layerId, () => {
+        if (featureTooltip) { featureTooltip.remove(); featureTooltip = null }
+      })
+    }
   })
 
   return m
@@ -491,38 +596,41 @@ async function setLevel(level: 'states' | 'counties' | 'cities') {
     btn.classList.toggle('active', (btn as HTMLElement).dataset.level === level)
   })
 
-  // Hide all fill layers, then show the active one
-  const layers: Record<string, { fill: string; line: string; sourceLayer: string }> = {
-    states: { fill: 'states-fill', line: 'states-line', sourceLayer: 'states' },
-    counties: { fill: 'counties-fill', line: 'counties-line', sourceLayer: 'counties' },
-    cities: { fill: 'places-fill', line: 'places-line', sourceLayer: 'places' },
+  // Hide all fill/line/dot layers
+  for (const id of ['states-fill', 'states-line', 'counties-fill', 'counties-line',
+                     'places-fill', 'places-line', 'places-dots']) {
+    map.setLayoutProperty(id, 'visibility', 'none')
   }
 
-  for (const [, l] of Object.entries(layers)) {
-    map.setLayoutProperty(l.fill, 'visibility', 'none')
-    map.setLayoutProperty(l.line, 'visibility', 'none')
-  }
-
-  const active = layers[level]
-  map.setLayoutProperty(active.fill, 'visibility', 'visible')
-  map.setLayoutProperty(active.line, 'visibility', 'visible')
-
-  // Keep state outlines visible for context when showing counties or cities
-  if (level !== 'states') {
+  // Show layers for the active level
+  if (level === 'states') {
+    map.setLayoutProperty('states-fill', 'visibility', 'visible')
     map.setLayoutProperty('states-line', 'visibility', 'visible')
+    colorMap(data, 'states-fill', 'states')
+  } else if (level === 'counties') {
+    map.setLayoutProperty('counties-fill', 'visibility', 'visible')
+    map.setLayoutProperty('counties-line', 'visibility', 'visible')
+    map.setLayoutProperty('states-line', 'visibility', 'visible')
+    colorMap(data, 'counties-fill', 'counties')
+  } else {
+    // Cities: dots + fills + outlines all visible (zoom controls which shows)
+    map.setLayoutProperty('places-dots', 'visibility', 'visible')
+    map.setLayoutProperty('places-fill', 'visibility', 'visible')
+    map.setLayoutProperty('places-line', 'visibility', 'visible')
+    map.setLayoutProperty('states-line', 'visibility', 'visible')
+    // No colorMap needed — places use embedded nwi property in tile data
   }
 
   // Clear selection highlight and hide inactive highlight layers
   clearSelection()
   const slMap: Record<string, string> = { states: 'states', counties: 'counties', cities: 'places' }
   for (const [lvl, sl] of Object.entries(slMap)) {
-    // Keep state highlights visible (for drill-down context), hide others
     const vis = (lvl === level || lvl === 'states') ? 'visible' : 'none'
     map.setLayoutProperty(`highlight-${sl}`, 'visibility', vis)
     map.setLayoutProperty(`highlight-inner-${sl}`, 'visibility', vis)
+    map.setLayoutProperty(`selected-${sl}`, 'visibility', vis)
+    map.setLayoutProperty(`selected-inner-${sl}`, 'visibility', vis)
   }
-
-  colorMap(data, active.fill, active.sourceLayer)
 
   // Reset panel
   showEmptyPanel()
@@ -531,9 +639,8 @@ async function setLevel(level: 'states' | 'counties' | 'cities') {
 // ─── Choropleth coloring ───
 
 function colorMap(data: DataSet, layerId: string, _sourceLayer: string) {
-  // For small datasets (states, cities), use a simple match expression.
-  // For large datasets (counties), embed NWI score as a numeric property
-  // in a lookup and use step/interpolate on the score.
+  // States and counties use a FIPS→score match expression (small enough).
+  // Places use embedded 'nwi' property in tile data — no colorMap call needed.
   const entries = Object.entries(data)
 
   // Build a match expression mapping FIPS -> numeric NWI score,
@@ -577,10 +684,10 @@ let selectedFeature: { id: string; sourceLayer: string } | null = null
 
 function clearSelection() {
   if (selectedFeature) {
-    map.setFeatureState(
-      { source: 'boundaries', sourceLayer: selectedFeature.sourceLayer, id: selectedFeature.id },
-      { selected: false }
-    )
+    // Clear filter-based selection highlight
+    const sl = selectedFeature.sourceLayer
+    map.setFilter(`selected-${sl}`, ['==', ['get', 'FIPS'], ''])
+    map.setFilter(`selected-inner-${sl}`, ['==', ['get', 'FIPS'], ''])
     selectedFeature = null
   }
 }
@@ -608,16 +715,15 @@ async function drillDown(stateFips: string) {
   map.setLayoutProperty('states-line', 'visibility', 'visible')
   map.setLayoutProperty('places-fill', 'visibility', 'none')
   map.setLayoutProperty('places-line', 'visibility', 'none')
+  map.setLayoutProperty('places-dots', 'visibility', 'none')
 
   // Color counties
   colorMap(countyData, 'counties-fill', 'counties')
 
   // Highlight drilled state
   clearSelection()
-  map.setFeatureState(
-    { source: 'boundaries', sourceLayer: 'states', id: stateFips },
-    { selected: true }
-  )
+  map.setFilter('selected-states', ['==', ['get', 'FIPS'], stateFips])
+  map.setFilter('selected-inner-states', ['==', ['get', 'FIPS'], stateFips])
   selectedFeature = { id: stateFips, sourceLayer: 'states' }
 
   // Zoom to state — fitBounds interrupts any in-progress animation (no stop needed)
@@ -640,19 +746,14 @@ function selectFeature(fips: string, _lngLat: maplibregl.LngLat) {
   const jurisdiction = data[fips]
   if (!jurisdiction) return
 
-  // Highlight via feature-state
+  // Highlight via filter (robust — doesn't depend on tile-loaded feature-state)
   clearSelection()
   const sourceLayer = level === 'cities' ? 'places' : 'counties'
-  const applySelection = () => {
-    map.setFeatureState(
-      { source: 'boundaries', sourceLayer, id: fips },
-      { selected: true }
-    )
-  }
-  applySelection()
+  map.setFilter(`selected-${sourceLayer}`, ['==', ['get', 'FIPS'], fips])
+  map.setFilter(`selected-inner-${sourceLayer}`, ['==', ['get', 'FIPS'], fips])
   selectedFeature = { id: fips, sourceLayer }
 
-  // Zoom — re-apply feature-state after tiles settle at new zoom
+  // Zoom to feature
   const fb = featureBounds[fips]
   requestAnimationFrame(() => {
     if (fb) {
@@ -660,8 +761,6 @@ function selectFeature(fips: string, _lngLat: maplibregl.LngLat) {
     } else {
       map.flyTo({ center: _lngLat, zoom: 9, duration: 800 })
     }
-    // Re-apply after zoom settles — new tiles lose feature-state
-    map.once('idle', applySelection)
   })
 
   // Panel
@@ -1154,12 +1253,17 @@ function hideJurisdictionView() {
 
 // ─── URL routing ───
 
+let _hashFromCode = false  // suppress handleHash when we set the hash programmatically
+
 function updateHash(level?: string, fips?: string) {
+  _hashFromCode = true
   if (!level) { window.location.hash = ''; return }
   window.location.hash = fips ? `${level}/${fips}` : level
 }
 
 async function handleHash() {
+  if (_hashFromCode) { _hashFromCode = false; return }
+
   const hash = window.location.hash.slice(1) // remove #
   if (!hash) {
     hideJurisdictionView()
