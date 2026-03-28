@@ -512,8 +512,15 @@ async function setLevel(level: 'states' | 'counties' | 'cities') {
     map.setLayoutProperty('states-line', 'visibility', 'visible')
   }
 
-  // Clear selection highlight
+  // Clear selection highlight and hide inactive highlight layers
   clearSelection()
+  const slMap: Record<string, string> = { states: 'states', counties: 'counties', cities: 'places' }
+  for (const [lvl, sl] of Object.entries(slMap)) {
+    // Keep state highlights visible (for drill-down context), hide others
+    const vis = (lvl === level || lvl === 'states') ? 'visible' : 'none'
+    map.setLayoutProperty(`highlight-${sl}`, 'visibility', vis)
+    map.setLayoutProperty(`highlight-inner-${sl}`, 'visibility', vis)
+  }
 
   colorMap(data, active.fill, active.sourceLayer)
 
