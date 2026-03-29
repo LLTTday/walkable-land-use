@@ -63,6 +63,27 @@ def pop_minzoom(population):
     return 8
 
 
+# Clean display names for Census place names that have legal suffixes.
+# Keyed by (name, state_fips) to distinguish same-name places in different states.
+DISPLAY_NAMES = {
+    ("Nashville-Davidson metropolitan government (balance)", "47"): "Nashville",
+    ("Louisville/Jefferson County metro government (balance)", "21"): "Louisville",
+    ("Indianapolis city (balance)", "18"): "Indianapolis",
+    ("Lexington-Fayette", "21"): "Lexington",
+    ("Augusta-Richmond County consolidated government (balance)", "13"): "Augusta",
+    ("Athens-Clarke County unified government (balance)", "13"): "Athens",
+    ("Urban Honolulu", "15"): "Honolulu",
+    ("Butte-Silver Bow (balance)", "30"): "Butte",
+    ("Milford city (balance)", "09"): "Milford",
+    ("Boise City", "16"): "Boise",  # Idaho — the common name is just Boise
+}
+
+
+def clean_display_name(census_name, state_fips):
+    """Return a clean label name, stripping Census legal suffixes."""
+    return DISPLAY_NAMES.get((census_name, state_fips), census_name)
+
+
 def load_clip_mask(states_path):
     """Load states_clean.geojson as a unified clip mask geometry."""
     states = gpd.read_file(states_path)
@@ -234,9 +255,10 @@ def main():
             is_incorporated = 1 if classfp.startswith("C") else 0
 
             # Polygon feature — embed score, population, and incorporation status
+            display_name = clean_display_name(place_name, state_fips)
             feat["properties"] = {
                 "FIPS": cities_key,
-                "NAME": place_name,
+                "NAME": display_name,
                 "STATEFP": state_fips,
                 "nwi": nwi,
                 "pop": pop,
@@ -257,7 +279,7 @@ def main():
                 "geometry": {"type": "Point", "coordinates": center},
                 "properties": {
                     "FIPS": cities_key,
-                    "NAME": place_name,
+                    "NAME": display_name,
                     "STATEFP": state_fips,
                     "nwi": nwi,
                     "pop": pop,
@@ -311,11 +333,27 @@ def main():
         fips = feat["properties"]["FIPS"]
         bounds[fips] = [round(v, 4) for v in bbox]
 
-    # Clip counties
+    # Clip counties and generate county centroid points
     counties_gj = BOUNDARIES_DIR / "counties_clean.geojson"
     counties_clipped_gj = BOUNDARIES_DIR / "counties_clipped.geojson"
     cj = clip_geojson_file(counties_gj, clip_mask, counties_clipped_gj)
     print(f"  Counties: {len(cj['features'])} features → {counties_clipped_gj.name}")
+
+    county_points = []
+    for feat in cj["features"]:
+        geom = shape(feat["geometry"])
+        pt = geom.representative_point()
+        county_points.append({
+            "type": "Feature",
+            "tippecanoe": {"minzoom": 0},
+            "geometry": {"type": "Point", "coordinates": [round(pt.x, 4), round(pt.y, 4)]},
+            "properties": {"NAME": feat["properties"].get("NAME", ""), "FIPS": feat["properties"].get("FIPS", "")},
+        })
+    county_points_gj = {"type": "FeatureCollection", "features": county_points}
+    county_points_path = BOUNDARIES_DIR / "counties_points.geojson"
+    with open(county_points_path, "w") as f:
+        json.dump(county_points_gj, f)
+    print(f"  County centroids: {len(county_points)} points")
 
     # Write polygon GeoJSON
     places_geojson = {"type": "FeatureCollection", "features": matched_features}
@@ -379,8 +417,10 @@ def main():
         "--no-feature-limit", "--no-tile-size-limit",
         "--coalesce-densest-as-needed",
         "--extend-zooms-if-still-dropping",
+        "--order-descending-by=pop",
         "-L", f"states:{states_gj}",
         "-L", f"counties:{counties_clipped_gj}",
+        "-L", f"counties_points:{county_points_path}",
         "-L", f"places:{poly_path}",
         "-L", f"places_points:{points_path}",
         "--force",

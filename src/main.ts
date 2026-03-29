@@ -453,6 +453,75 @@ function initMap(): maplibregl.Map {
       })
     }
 
+    // ─── Labels ───
+
+    // City labels — single layer, continuous size by population.
+    // log10(pop) maps ~3.7 (5k) to ~6.9 (8M) — scaled to font sizes.
+    // Bold for 500k+, regular for the rest.
+    // Tippecanoe minzoom controls when features enter tiles;
+    // collision detection + symbol-sort-key handles density.
+    m.addLayer({
+      id: 'city-labels',
+      type: 'symbol',
+      source: 'boundaries',
+      'source-layer': 'places_points',
+      minzoom: 3,
+      filter: ['>=', ['get', 'pop'],
+        ['step', ['zoom'], 500000, 5, 100000, 7, 25000, 8, 0],
+      ] as unknown as maplibregl.FilterSpecification,
+      layout: {
+        'text-field': ['get', 'NAME'],
+        'text-font': ['case', ['>=', ['get', 'pop'], 500000],
+          ['literal', ['Noto Sans Bold']], ['literal', ['Noto Sans Regular']]],
+        'text-size': ['interpolate', ['linear'], ['zoom'],
+          // At low zoom: spread 8–16px across pop range
+          3, ['interpolate', ['linear'], ['ln', ['max', ['get', 'pop'], 1]],
+            Math.log(5000), 8, Math.log(1000000), 16],
+          // At high zoom: spread 10–20px
+          10, ['interpolate', ['linear'], ['ln', ['max', ['get', 'pop'], 1]],
+            Math.log(5000), 10, Math.log(1000000), 20],
+        ],
+        'text-allow-overlap': false,
+        'text-optional': true,
+        'text-variable-anchor': ['top', 'bottom', 'left', 'right'],
+        'text-radial-offset': 0.5,
+        'symbol-sort-key': ['-', ['get', 'pop']],
+        'visibility': 'none',
+      },
+      paint: {
+        'text-color': '#333333',
+        'text-halo-color': 'rgba(255,255,255,0.8)',
+        'text-halo-width': 1.5,
+        'text-halo-blur': 0.5,
+        'text-opacity': ['interpolate', ['linear'], ['zoom'], 10, 1, 12, 0.4],
+      },
+    })
+
+    // County labels — centroids from PMTiles, hidden by default
+    m.addLayer({
+      id: 'county-labels',
+      type: 'symbol',
+      source: 'boundaries',
+      'source-layer': 'counties_points',
+      minzoom: 6,
+      layout: {
+        'text-field': ['get', 'NAME'],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 3, 10, 7, 12, 10, 14],
+        'text-allow-overlap': false,
+        'text-variable-anchor': ['center', 'top', 'bottom', 'left', 'right'],
+        'text-padding': 2,
+        'visibility': 'none',
+      },
+      paint: {
+        'text-color': '#555555',
+        'text-halo-color': 'rgba(255,255,255,0.7)',
+        'text-halo-width': 1.5,
+        'text-halo-blur': 0.5,
+        'text-opacity': ['interpolate', ['linear'], ['zoom'], 10, 1, 12, 0.4],
+      },
+    })
+
     // Load initial data, color the map, show national stats
     setLevel('states')
     fetch('/data/national.json').then(r => r.json()).then(j => showPanel(j))
@@ -619,9 +688,11 @@ async function setLevel(level: 'states' | 'counties' | 'cities') {
     btn.classList.toggle('active', (btn as HTMLElement).dataset.level === level)
   })
 
-  // Hide all fill/line/dot layers
+  // Hide all fill/line/dot/label layers
   for (const id of ['states-fill', 'states-line', 'counties-fill', 'counties-line',
-                     'places-fill', 'places-line', 'places-dots']) {
+                     'places-fill', 'places-line', 'places-dots',
+                     'city-labels',
+                     'county-labels']) {
     map.setLayoutProperty(id, 'visibility', 'none')
   }
 
@@ -634,6 +705,7 @@ async function setLevel(level: 'states' | 'counties' | 'cities') {
     map.setLayoutProperty('counties-fill', 'visibility', 'visible')
     map.setLayoutProperty('counties-line', 'visibility', 'visible')
     map.setLayoutProperty('states-line', 'visibility', 'visible')
+    map.setLayoutProperty('county-labels', 'visibility', 'visible')
     colorMap(data, 'counties-fill', 'counties')
   } else {
     // Cities: dots + fills + outlines all visible (zoom controls which shows)
@@ -641,6 +713,7 @@ async function setLevel(level: 'states' | 'counties' | 'cities') {
     map.setLayoutProperty('places-fill', 'visibility', 'visible')
     map.setLayoutProperty('places-line', 'visibility', 'visible')
     map.setLayoutProperty('states-line', 'visibility', 'visible')
+    map.setLayoutProperty('city-labels', 'visibility', 'visible')
     // No colorMap needed — places use embedded nwi property in tile data
   }
 
