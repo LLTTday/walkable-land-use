@@ -876,9 +876,6 @@ function showPanel(j: Jurisdiction) {
   }
 
   // Summary stats
-  const abovePct = j.population > 0
-    ? Math.round(((j.by_nwi['2']?.population || 0) + (j.by_nwi['3']?.population || 0)) / j.population * 100)
-    : 0
   document.getElementById('panel-summary')!.innerHTML = `
     <div class="stat-card">
       <div class="stat-value">${formatPop(j.population)}</div>
@@ -887,10 +884,6 @@ function showPanel(j: Jurisdiction) {
     <div class="stat-card">
       <div class="stat-value">${j.avg_nwi.toFixed(1)}</div>
       <div class="stat-label">Avg Walkability</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-value">${abovePct}%</div>
-      <div class="stat-label">Above Avg+</div>
     </div>
   `
 
@@ -910,8 +903,8 @@ function buildNwiBarHtml(j: Jurisdiction): string {
     const pop = j.by_nwi[String(i)]?.population || 0
     const pct = pop / total * 100
     if (pct > 0) {
-      const label = pct > 8 ? `${Math.round(pct)}%` : ''
-      html += `<div class="nwi-bar-segment" data-level="${i}" style="width:${pct}%;background:${NWI_COLORS[i]}">${label}</div>`
+      const tooltip = `${NWI_LEVEL_LABELS[i]}: ${Math.round(pct)}% (${pop.toLocaleString()})`
+      html += `<div class="nwi-bar-segment" data-level="${i}" data-tooltip="${tooltip}" style="width:${pct}%;background:${NWI_COLORS[i]}"></div>`
     }
   }
   html += '</div>'
@@ -1049,14 +1042,12 @@ function renderByNwiView(el: HTMLElement, j: Jurisdiction, section: typeof DEMO_
     for (let i = 0; i < 4; i++) {
       const pct = byLevel[i] / total * 100
       if (pct > 0) {
-        html += `<div class="nwi-stacked-seg" style="width:${pct}%;background:${NWI_COLORS[i]}" title="${NWI_LEVEL_LABELS[i]}: ${pct.toFixed(0)}%"></div>`
+        const tooltip = `${NWI_LEVEL_LABELS[i]}: ${Math.round(pct)}% (${byLevel[i].toLocaleString()})`
+        html += `<div class="nwi-stacked-seg" data-tooltip="${tooltip}" style="width:${pct}%;background:${NWI_COLORS[i]}"></div>`
       }
     }
-    html += '</div></div>'
-    const abovePct = (byLevel[2] + byLevel[3]) / total * 100
-    html += `<span class="demo-pct">${abovePct.toFixed(0)}%</span></div>`
+    html += '</div></div></div>'
   }
-  html += '<div class="demo-note">Bar: distribution across walkability levels. %: above-average+.</div>'
   el.innerHTML = html
 }
 
@@ -1084,11 +1075,11 @@ function renderNwiByView(el: HTMLElement, j: Jurisdiction, section: typeof DEMO_
       const val = cat[key] || 0
       const pct = val / total * 100
       if (pct > 1) {
-        html += `<div class="nwi-stacked-seg" style="width:${pct}%;background:${catColors[ci]}" title="${_label}: ${pct.toFixed(0)}%"></div>`
+        const tooltip = `${_label}: ${Math.round(pct)}% (${val.toLocaleString()})`
+        html += `<div class="nwi-stacked-seg" data-tooltip="${tooltip}" style="width:${pct}%;background:${catColors[ci]}"></div>`
       }
     })
-    html += '</div></div>'
-    html += '<span class="demo-pct"></span></div>'
+    html += '</div></div></div>'
   }
 
   // Legend
@@ -1190,10 +1181,6 @@ function showJurisdictionView(level: 'states' | 'counties' | 'cities', key: stri
 
   jvCurrentView = 'by_nwi' // reset to default
 
-  const abovePct = j.population > 0
-    ? Math.round(((j.by_nwi['2']?.population || 0) + (j.by_nwi['3']?.population || 0)) / j.population * 100)
-    : 0
-
   const nwiBarHtml = buildNwiBarHtml(j)
 
   jv.innerHTML = `
@@ -1213,10 +1200,6 @@ function showJurisdictionView(level: 'states' | 'counties' | 'cities', key: stri
         <div class="stat-card">
           <div class="stat-value">${j.avg_nwi.toFixed(1)}</div>
           <div class="stat-label">Avg Walkability</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">${abovePct}%</div>
-          <div class="stat-label">Above Avg+</div>
         </div>
       </div>
       <div class="jv-nwi-bar">${nwiBarHtml}</div>
@@ -1422,9 +1405,33 @@ async function setView(view: 'map' | 'table') {
   }
 }
 
+// ─── Bar tooltips ───
+
+function initBarTooltips() {
+  const tip = document.createElement('div')
+  tip.className = 'bar-tooltip'
+  document.body.appendChild(tip)
+
+  document.addEventListener('mouseover', (e) => {
+    const seg = (e.target as HTMLElement).closest('[data-tooltip]') as HTMLElement | null
+    if (!seg) return
+    tip.textContent = seg.dataset.tooltip!
+    tip.classList.add('visible')
+    const rect = seg.getBoundingClientRect()
+    tip.style.left = `${rect.left + rect.width / 2 - tip.offsetWidth / 2}px`
+    tip.style.top = `${rect.top - tip.offsetHeight - 6}px`
+  })
+
+  document.addEventListener('mouseout', (e) => {
+    const seg = (e.target as HTMLElement).closest('[data-tooltip]')
+    if (seg) tip.classList.remove('visible')
+  })
+}
+
 // ─── Init ───
 
 buildLegend()
+initBarTooltips()
 map = initMap()
 
 // Load pre-computed feature bounds

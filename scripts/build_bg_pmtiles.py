@@ -17,15 +17,65 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+import geopandas as gpd
+from shapely.geometry import shape, mapping, MultiPolygon
+from shapely import Polygon as ShapelyPolygon
+
 DB = Path(__file__).parent.parent.parent / "nwi_analysis" / "data" / "nwi_full_2019_complete.db"
 BG_DIR = Path(__file__).parent / "boundaries" / "bg_raw"
 OUT_DIR = Path(__file__).parent / "boundaries"
 PUBLIC = Path(__file__).parent.parent / "public"
+STATES_GJ = Path(__file__).parent / "boundaries" / "states_clean.geojson"
 
 # Only include zoom levels 6-12 for block groups
 # (they're too small to see below zoom 6)
 MIN_ZOOM = 6
 MAX_ZOOM = 12
+
+
+def extract_polygons(geom):
+    """Extract polygon parts from a geometry, discarding points/lines."""
+    if isinstance(geom, (ShapelyPolygon, MultiPolygon)):
+        return geom
+    if geom.geom_type == "GeometryCollection":
+        polys = [g for g in geom.geoms if isinstance(g, (ShapelyPolygon, MultiPolygon))]
+        if not polys:
+            return None
+        if len(polys) == 1:
+            return polys[0]
+        parts = []
+        for p in polys:
+            if isinstance(p, MultiPolygon):
+                parts.extend(p.geoms)
+            else:
+                parts.append(p)
+        return MultiPolygon(parts)
+    return None
+
+
+def load_clip_mask():
+    """Load states_clean.geojson as a unified clip mask geometry."""
+    states = gpd.read_file(STATES_GJ)
+    return states.dissolve().geometry.iloc[0]
+
+
+def clip_features(features, clip_mask):
+    """Clip features to shoreline, dropping empty/non-polygon results."""
+    clipped = []
+    for feat in features:
+        geom = shape(feat["geometry"])
+        try:
+            result = geom.intersection(clip_mask)
+        except Exception:
+            clipped.append(feat)
+            continue
+        result = extract_polygons(result)
+        if result is None or result.is_empty:
+            continue
+        feat = dict(feat)
+        feat["geometry"] = mapping(result)
+        clipped.append(feat)
+    return clipped
 
 
 def load_nwi_scores():
@@ -101,6 +151,13 @@ def main():
         print(f"  {state_fips}: {len(gj['features'])} BGs")
 
     print(f"\nMatched: {matched:,}, Unmatched: {unmatched:,}")
+
+    # Clip to shoreline
+    print("\nClipping to shoreline (states_clean.geojson)...")
+    clip_mask = load_clip_mask()
+    before = len(all_features)
+    all_features = clip_features(all_features, clip_mask)
+    print(f"  Block groups: {before:,} → {len(all_features):,} (clipped)")
 
     # Write merged GeoJSON
     merged = {"type": "FeatureCollection", "features": all_features}

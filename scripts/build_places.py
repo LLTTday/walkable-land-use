@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
 Merge TIGER place boundaries, match to cities.json entries,
-output polygon + centroid GeoJSON, compute bounds, and regenerate PMTiles.
+clip to shoreline, output polygon + centroid GeoJSON, compute bounds,
+and regenerate PMTiles.
 
 Embeds avg_nwi and population as feature properties so the map can
 style directly from tile data (no 28k-entry match expression needed).
 
 Centroids get a minzoom property based on population tier for
 progressive disclosure: big cities appear first as you zoom in.
+
+Shoreline clipping: place and county polygons are clipped against the
+states_clean.geojson mask (cartographic boundaries) to remove water/ocean
+fill artifacts.
 """
 
 import json
@@ -15,6 +20,10 @@ import math
 import subprocess
 import os
 from pathlib import Path
+
+import geopandas as gpd
+from shapely.geometry import shape, mapping, MultiPolygon
+from shapely import Polygon as ShapelyPolygon
 
 PLACES_DIR = Path(__file__).parent / "boundaries" / "places_raw"
 BOUNDARIES_DIR = Path(__file__).parent / "boundaries"
@@ -52,6 +61,74 @@ def pop_minzoom(population):
         if population >= threshold:
             return zoom
     return 8
+
+
+def load_clip_mask(states_path):
+    """Load states_clean.geojson as a unified clip mask geometry."""
+    states = gpd.read_file(states_path)
+    return states.dissolve().geometry.iloc[0]
+
+
+def extract_polygons(geom):
+    """Extract polygon parts from a geometry, discarding points/lines.
+
+    Intersection can produce GeometryCollections with mixed types.
+    We only want the polygon components.
+    """
+    if isinstance(geom, (ShapelyPolygon, MultiPolygon)):
+        return geom
+    if geom.geom_type == "GeometryCollection":
+        polys = [g for g in geom.geoms if isinstance(g, (ShapelyPolygon, MultiPolygon))]
+        if not polys:
+            return None
+        if len(polys) == 1:
+            return polys[0]
+        # Flatten any MultiPolygons
+        parts = []
+        for p in polys:
+            if isinstance(p, MultiPolygon):
+                parts.extend(p.geoms)
+            else:
+                parts.append(p)
+        return MultiPolygon(parts)
+    return None
+
+
+def clip_geojson_features(features, clip_mask):
+    """Clip a list of GeoJSON features against a shapely geometry.
+
+    Returns clipped features. Empty or non-polygon results are dropped.
+    """
+    clipped = []
+    for feat in features:
+        geom = shape(feat["geometry"])
+        try:
+            result = geom.intersection(clip_mask)
+        except Exception:
+            clipped.append(feat)
+            continue
+        result = extract_polygons(result)
+        if result is None or result.is_empty:
+            continue
+        feat = dict(feat)
+        feat["geometry"] = mapping(result)
+        clipped.append(feat)
+    return clipped
+
+
+def clip_geojson_file(input_path, clip_mask, output_path=None):
+    """Clip all features in a GeoJSON file against the clip mask.
+
+    If output_path is given, writes the result. Returns the clipped
+    FeatureCollection dict.
+    """
+    with open(input_path) as f:
+        gj = json.load(f)
+    gj["features"] = clip_geojson_features(gj["features"], clip_mask)
+    if output_path:
+        with open(output_path, "w") as f:
+            json.dump(gj, f)
+    return gj
 
 
 def bbox_of_geometry(geom):
@@ -152,9 +229,9 @@ def main():
             pop = city_data["population"]
             nwi = city_data["avg_nwi"]
 
-            # LSAD10: "25" = incorporated, "43" = CDP, etc.
-            lsad = props.get("LSAD10", "")
-            is_incorporated = 1 if lsad == "25" else 0
+            # CLASSFP10: C1/C5/C9 = incorporated, U1/U2 = CDP, M2 = military
+            classfp = props.get("CLASSFP10", "")
+            is_incorporated = 1 if classfp.startswith("C") else 0
 
             # Polygon feature — embed score, population, and incorporation status
             feat["properties"] = {
@@ -203,6 +280,42 @@ def main():
             key = city_lookup.get((name, fips), "?")
             pop = cities.get(key, {}).get("population", 0)
             print(f"  {name}, {STATE_FIPS.get(fips, fips)} (pop {pop:,})")
+
+    # --- Shoreline clipping ---
+    states_gj = BOUNDARIES_DIR / "states_clean.geojson"
+    print("\nClipping to shoreline (states_clean.geojson)...")
+    clip_mask = load_clip_mask(states_gj)
+
+    # Clip places
+    before = len(matched_features)
+    matched_features = clip_geojson_features(matched_features, clip_mask)
+    print(f"  Places: {before} → {len(matched_features)} (clipped)")
+
+    # Clip per-state geometry dict entries
+    for sfips, geoms in state_geoms.items():
+        for key, geom in list(geoms.items()):
+            try:
+                result = shape(geom).intersection(clip_mask)
+                result = extract_polygons(result)
+                if result is None or result.is_empty:
+                    del geoms[key]
+                else:
+                    geoms[key] = mapping(result)
+            except Exception:
+                pass
+
+    # Recompute bounds from clipped geometries
+    bounds = {}
+    for feat in matched_features:
+        bbox = bbox_of_geometry(feat["geometry"])
+        fips = feat["properties"]["FIPS"]
+        bounds[fips] = [round(v, 4) for v in bbox]
+
+    # Clip counties
+    counties_gj = BOUNDARIES_DIR / "counties_clean.geojson"
+    counties_clipped_gj = BOUNDARIES_DIR / "counties_clipped.geojson"
+    cj = clip_geojson_file(counties_gj, clip_mask, counties_clipped_gj)
+    print(f"  Counties: {len(cj['features'])} features → {counties_clipped_gj.name}")
 
     # Write polygon GeoJSON
     places_geojson = {"type": "FeatureCollection", "features": matched_features}
@@ -256,8 +369,6 @@ def main():
     print(f"Geometry files: {len(state_geoms)} states, {total_geom_kb:.0f}KB total")
 
     # Regenerate PMTiles with four layers
-    states_gj = BOUNDARIES_DIR / "states_clean.geojson"
-    counties_gj = BOUNDARIES_DIR / "counties_clean.geojson"
     pmtiles_out = PUBLIC / "boundaries.pmtiles"
 
     print("\nGenerating PMTiles...")
@@ -269,7 +380,7 @@ def main():
         "--coalesce-densest-as-needed",
         "--extend-zooms-if-still-dropping",
         "-L", f"states:{states_gj}",
-        "-L", f"counties:{counties_gj}",
+        "-L", f"counties:{counties_clipped_gj}",
         "-L", f"places:{poly_path}",
         "-L", f"places_points:{points_path}",
         "--force",
