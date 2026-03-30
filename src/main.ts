@@ -1168,24 +1168,19 @@ function showMethodology() {
   document.getElementById('nwi-bar')!.innerHTML = ''
   document.getElementById('demographics')!.innerHTML = `
     <div class="demo-section">
-      <div class="demo-title">What This Measures</div>
-      <p class="method-text">The <strong>National Walkability Index</strong> (EPA, 2021) scores every Census block group in America on how walkable its <em>land use</em> is — intersection density, land use diversity, and transit proximity.</p>
-      <p class="method-text">We combined it with <strong>American Community Survey</strong> demographics (2015–2019) to ask: who lives in walkable places, and who doesn't?</p>
-    </div>
-    <div class="demo-section">
-      <div class="demo-title">How to Read the Scores</div>
-      <p class="method-text">The walkability index ranges from 1–10. Scores above 6 indicate above-average walkable land use. The four-level classification groups block groups into quartiles.</p>
-      <p class="method-text">All metrics are <strong>population-weighted</strong> — a block group with 10,000 residents counts more than one with 10.</p>
-    </div>
-    <div class="demo-section">
-      <div class="demo-title">Known Limitations</div>
-      <p class="method-text"><strong>Too dense:</strong> In Manhattan, block groups are so small they can't contain enough intersections or land uses. NYC ranks #83 — below its true walkability.</p>
-      <p class="method-text"><strong>Too sparse:</strong> Small walkable towns (like Tekoa, WA) get swallowed by large rural block groups.</p>
-      <p class="method-text">The NWI measures <em>land use patterns</em>, not sidewalk quality, pedestrian safety, or actual walking behavior.</p>
-    </div>
-    <div class="demo-section">
       <div class="demo-title">Data Sources</div>
-      <p class="method-text">EPA National Walkability Index (2021 release, 2017–2020 data) · American Community Survey 5-year estimates (2015–2019) · Census 2010 geographies · 220,000 block groups</p>
+      <p class="method-text"><a href="https://www.census.gov/data/developers/data-sets/acs-5year.html">American Community Survey</a> — A U.S. Census survey that provides information on a yearly basis about our nation and its people.</p>
+      <p class="method-text"><a href="https://www.epa.gov/smartgrowth/smart-location-mapping">National Walkability Index</a> — A resource of the EPA that ranks U.S. Census block groups according to their relative walkability.</p>
+    </div>
+    <div class="demo-section">
+      <div class="demo-title">Methodology</div>
+      <p class="method-text">The <em>population-weighted mean walkable land use</em> in this tool is based on the data from the EPA's National Walkability Index. It combines different factors that affect how walkable a Census Block Group is — intersection density, transit stop proximity, and diversity of land use — and scores them on a scale from 1 to 20. We calculated the average walkability for various regions and places by adjusting for each block group's population and converted that figure to a 10 point scale. This gave us the average walkability index shown in our tables and plots.</p>
+      <p class="method-text">We use the phrase <em>Walkable Land Use</em> because EPA's National Walkability Index primarily relies upon density, diversity of land uses, and proximity to transit, which research demonstrates that people located in census blocks with these features walk more. Due to current data limitation it does not measure sidewalks, disability accessibility, shade or street level amenities. See its <a href="https://www.epa.gov/smartgrowth/smart-location-mapping#702702702702702702702702702702702">methodology</a>.</p>
+      <p class="method-text">The latest iteration of the National Walkability Index was published in 2021, using a variety of data sources published between 2017 and 2020. For the demographic estimates used in this analysis, we used the American Community Survey's five-year estimates for 2015–2019. These are the latest data compatible with the geographies used by the National Walkability Index.</p>
+    </div>
+    <div class="demo-section">
+      <div class="demo-title">City &amp; Place Statistics</div>
+      <p class="method-text">City and place statistics are calculated using <strong>area-weighted interpolation</strong>. Census block groups often cross municipal boundaries, so we estimate each city's demographics by proportioning block group data according to how much of the block group's area falls within the city. This method is standard in geographic analysis but introduces uncertainty for smaller places where a single block group may span the entire city boundary. Statistics for places under 500 population are suppressed.</p>
     </div>
     <div class="demo-section method-credit">
       Built by Elliott Day for <strong>America Walks</strong> · americawalks.org
