@@ -20,13 +20,11 @@ jobs:
           node-version: 20
 
       - name: Install and build
-        working-directory: v2
         run: |
           npm ci
           npm run build
 
       - name: Remove large files (proxied from GitHub releases)
-        working-directory: v2
         run: |
           rm -f dist/blockgroups.pmtiles dist/boundaries.pmtiles
           rm -f dist/data/cities.json dist/data/counties.json
@@ -37,4 +35,3 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist --project-name=walkable-land-use
-          workingDirectory: v2
