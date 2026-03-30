@@ -911,6 +911,22 @@ function showPanel(j: Jurisdiction) {
   const nameEl = document.getElementById('panel-name')!
   nameEl.textContent = j.name
 
+  // Add close button (deselect) — only for selected features, not national
+  const existingClose = nameEl.querySelector('.panel-close')
+  if (existingClose) existingClose.remove()
+  if (selectedFeature) {
+    const close = document.createElement('button')
+    close.className = 'panel-close'
+    close.textContent = '\u00d7'
+    close.title = 'Deselect'
+    close.addEventListener('click', () => {
+      clearSelection()
+      showEmptyPanel()
+      updateHash(currentLevel)
+    })
+    nameEl.prepend(close)
+  }
+
   // Add "Full View →" link (only for real jurisdictions, not national)
   const existingLink = nameEl.querySelector('.jv-link')
   if (existingLink) existingLink.remove()
@@ -1261,14 +1277,25 @@ function showJurisdictionView(level: 'states' | 'counties' | 'cities', key: stri
     </div>
   `
 
-  // Wire back button
+  // Wire back button — return to map zoomed on this jurisdiction
   document.getElementById('jv-back-btn')!.addEventListener('click', () => {
     hideJurisdictionView()
-    // Navigate to explorer with this jurisdiction's level active
-    setLevel(level)
-    const data = dataCache[level]
-    if (data && data[key]) showPanel(data[key])
-    updateHash(level, key)
+    setLevel(level).then(() => {
+      // Zoom to and select the feature on the map
+      const fb = featureBounds[key]
+      if (fb) {
+        requestAnimationFrame(() => {
+          map.fitBounds([[fb[0], fb[1]], [fb[2], fb[3]]], { padding: 60, duration: 800, maxZoom: 13 })
+        })
+      }
+      const sourceLayer = level === 'cities' ? 'places' : level === 'counties' ? 'counties' : 'states'
+      map.setFilter(`selected-${sourceLayer}`, ['==', ['get', 'FIPS'], key])
+      map.setFilter(`selected-inner-${sourceLayer}`, ['==', ['get', 'FIPS'], key])
+      selectedFeature = { id: key, sourceLayer }
+      const data = dataCache[level]
+      if (data && data[key]) showPanel(data[key])
+      updateHash(level, key)
+    })
   })
 
   // Wire view toggle

@@ -152,7 +152,25 @@ body { height: 100vh; overflow: hidden; }
   color: var(--accent);
   margin-bottom: 20px;
   line-height: 1.3;
+  position: relative;
 }
+
+.panel-close {
+  float: right;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-muted);
+  font-size: 18px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+}
+.panel-close:hover { color: var(--fg); border-color: var(--fg-muted); }
 
 #panel-summary {
   display: flex;
