@@ -1041,7 +1041,7 @@ function renderDemoPanel(j: Jurisdiction) {
   renderDemoContent()
 }
 
-const DEMO_MIN_POP = 500
+const DEMO_MIN_POP = 200
 
 function renderDemoContent() {
   const j = currentJurisdiction
@@ -1050,7 +1050,7 @@ function renderDemoContent() {
   const section = DEMO_SECTIONS[currentDemoCategory]
 
   if (j.population < DEMO_MIN_POP) {
-    content.innerHTML = '<p class="demo-note">Demographics not shown for jurisdictions under 500 population — area-weighted estimates are unreliable at this scale.</p>'
+    content.innerHTML = '<p class="demo-note">Demographics not shown for jurisdictions under 200 population — area-weighted estimates are unreliable at this scale.</p>'
     return
   }
 
@@ -1196,7 +1196,7 @@ function showMethodology() {
     </div>
     <div class="demo-section">
       <div class="demo-title">City &amp; Place Statistics</div>
-      <p class="method-text">City and place statistics are calculated using <strong>area-weighted interpolation</strong>. Census block groups often cross municipal boundaries, so we estimate each city's demographics by proportioning block group data according to how much of the block group's area falls within the city. This method is standard in geographic analysis but introduces uncertainty for smaller places where a single block group may span the entire city boundary. Statistics for places under 500 population are suppressed.</p>
+      <p class="method-text">City and place statistics are calculated using <strong>area-weighted interpolation</strong>. Census block groups often cross municipal boundaries, so we estimate each city's demographics by proportioning block group data according to how much of the block group's area falls within the city.</p>
     </div>
     <div class="demo-section method-credit">
       Built by Elliott Day for <strong>America Walks</strong> · americawalks.org
@@ -1315,7 +1315,7 @@ function renderJvDemoGrid(j: Jurisdiction) {
   const grid = document.getElementById('jv-demo-grid')!
 
   if (j.population < DEMO_MIN_POP) {
-    grid.innerHTML = '<p class="demo-note" style="grid-column:1/-1">Demographics not shown for jurisdictions under 500 population — area-weighted estimates are unreliable at this scale.</p>'
+    grid.innerHTML = '<p class="demo-note" style="grid-column:1/-1">Demographics not shown for jurisdictions under 200 population — area-weighted estimates are unreliable at this scale.</p>'
     return
   }
 

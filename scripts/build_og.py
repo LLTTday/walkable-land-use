@@ -171,15 +171,14 @@ def build_og_image():
     draw.text((80, 180), "Walkable Land Use", fill=dark, font=title_font)
 
     # Subtitle
-    draw.text((80, 260), "Who lives in walkable places,", fill=(100, 96, 90), font=sub_font)
-    draw.text((80, 300), "and who doesn't?", fill=(100, 96, 90), font=sub_font)
+    draw.text((80, 260), "Who lives in walkable places?", fill=(100, 96, 90), font=sub_font)
 
     # Stats line
-    draw.text((80, 380), "Every state, county, and city in America", fill=(140, 136, 130), font=small_font)
-    draw.text((80, 415), "Demographics  \u00b7  Walkability Index  \u00b7  Interactive Maps", fill=(140, 136, 130), font=small_font)
+    draw.text((80, 340), "Every state, county, and city in America", fill=(140, 136, 130), font=small_font)
+    draw.text((80, 375), "Demographics  \u00b7  Walkability Index  \u00b7  Interactive Maps", fill=(140, 136, 130), font=small_font)
 
     # URL
-    draw.text((80, 500), "americawalks.org", fill=green, font=sub_font)
+    draw.text((80, 460), "americawalks.org", fill=green, font=sub_font)
 
     out = PUBLIC / "og-image.png"
     img.save(out, "PNG", optimize=True)
