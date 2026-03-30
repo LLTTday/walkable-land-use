@@ -320,9 +320,13 @@ def main():
             print(f"  {name}, {STATE_FIPS.get(fips, fips)} (pop {pop:,})")
 
     # --- Shoreline clipping ---
-    states_gj = BOUNDARIES_DIR / "states_clean.geojson"
     print("\nClipping to land mask...")
     clip_mask = load_clip_mask()
+
+    # Clip states
+    states_clipped_gj = BOUNDARIES_DIR / "states_clipped.geojson"
+    sj = clip_geojson_file(BOUNDARIES_DIR / "states_clean.geojson", clip_mask, states_clipped_gj)
+    print(f"  States: {len(sj['features'])} features → {states_clipped_gj.name}")
 
     # Clip places
     before = len(matched_features)
@@ -434,7 +438,7 @@ def main():
         "--coalesce-densest-as-needed",
         "--extend-zooms-if-still-dropping",
         "--order-descending-by=pop",
-        "-L", f"states:{states_gj}",
+        "-L", f"states:{states_clipped_gj}",
         "-L", f"counties:{counties_clipped_gj}",
         "-L", f"counties_points:{county_points_path}",
         "-L", f"places:{poly_path}",
