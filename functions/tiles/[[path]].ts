@@ -1,5 +1,5 @@
 // Cloudflare Pages Function — proxy PMTiles from GitHub releases with CORS
-const BASE = 'https://github.com/LLTTday/walkable-land-use/releases/download/v0.3.0'
+const BASE = 'https://github.com/LLTTday/walkable-land-use/releases/download/v0.4.0'
 
 export const onRequest: PagesFunction = async ({ params, request }) => {
   const path = (params.path as string[]).join('/')
