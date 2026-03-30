@@ -848,30 +848,9 @@ function selectFeature(fips: string, _lngLat: maplibregl.LngLat) {
   clearSelection()
   const sourceLayer = level === 'cities' ? 'places' : 'counties'
 
-  // Build dim mask: world polygon with selected feature as a hole
-  const fillLayer = sourceLayer === 'places' ? 'places-fill' : `${sourceLayer}-fill`
-  const rendered = map.queryRenderedFeatures(undefined as any, { layers: [fillLayer], filter: ['==', ['get', 'FIPS'], fips] })
-  if (rendered.length > 0) {
-    const geom = rendered[0].geometry
-    // World exterior ring (covers entire viewport and beyond)
-    const world = [[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]
-    // Extract hole rings from the selected feature
-    let holes: number[][][] = []
-    if (geom.type === 'Polygon') {
-      holes = geom.coordinates.map(ring => [...ring].reverse())
-    } else if (geom.type === 'MultiPolygon') {
-      // Use the largest polygon as the hole
-      for (const poly of geom.coordinates) {
-        holes.push(...poly.map(ring => [...ring].reverse()))
-      }
-    }
-    const mask: GeoJSON.Feature = {
-      type: 'Feature',
-      properties: {},
-      geometry: { type: 'Polygon', coordinates: [world, ...holes] },
-    }
-    ;(map.getSource('dim-mask') as maplibregl.GeoJSONSource).setData(mask)
-  }
+  // Dim mask disabled — cutout geometry from queryRenderedFeatures is
+  // tile-clipped and unreliable. Restore when per-state pre-extracted
+  // geometries are wired up (seed 631).
   // Outline the selected feature
   map.setFilter(`selected-${sourceLayer}`, ['==', ['get', 'FIPS'], fips])
   map.setFilter(`selected-inner-${sourceLayer}`, ['==', ['get', 'FIPS'], fips])

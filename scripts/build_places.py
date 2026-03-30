@@ -84,9 +84,21 @@ def clean_display_name(census_name, state_fips):
     return DISPLAY_NAMES.get((census_name, state_fips), census_name)
 
 
-def load_clip_mask(states_path):
-    """Load states_clean.geojson as a unified clip mask geometry."""
-    states = gpd.read_file(states_path)
+LAND_MASK = Path(__file__).parent / "boundaries" / "land_mask.geojson"
+
+
+def load_clip_mask(mask_path=None):
+    """Load the land mask geometry for shoreline/water clipping.
+
+    Uses land_mask.geojson (states minus ocean minus lakes) if available,
+    falls back to dissolving states_clean.geojson.
+    """
+    path = mask_path or LAND_MASK
+    if path.exists():
+        gdf = gpd.read_file(path)
+        return gdf.geometry.iloc[0]
+    # Fallback: dissolve states
+    states = gpd.read_file(BOUNDARIES_DIR / "states_clean.geojson")
     return states.dissolve().geometry.iloc[0]
 
 
@@ -118,7 +130,9 @@ def extract_polygons(geom):
 def clip_geojson_features(features, clip_mask):
     """Clip a list of GeoJSON features against a shapely geometry.
 
-    Returns clipped features. Empty or non-polygon results are dropped.
+    Features whose polygons clip to empty (e.g. islands fully inside a
+    water body polygon) are kept with their original geometry — the mask
+    doesn't know about sub-lake islands but the Census data does.
     """
     clipped = []
     for feat in features:
@@ -130,6 +144,8 @@ def clip_geojson_features(features, clip_mask):
             continue
         result = extract_polygons(result)
         if result is None or result.is_empty:
+            # Island/barrier island — keep original geometry
+            clipped.append(feat)
             continue
         feat = dict(feat)
         feat["geometry"] = mapping(result)
@@ -305,8 +321,8 @@ def main():
 
     # --- Shoreline clipping ---
     states_gj = BOUNDARIES_DIR / "states_clean.geojson"
-    print("\nClipping to shoreline (states_clean.geojson)...")
-    clip_mask = load_clip_mask(states_gj)
+    print("\nClipping to land mask...")
+    clip_mask = load_clip_mask()
 
     # Clip places
     before = len(matched_features)

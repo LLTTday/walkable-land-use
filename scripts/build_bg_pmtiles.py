@@ -53,14 +53,24 @@ def extract_polygons(geom):
     return None
 
 
+LAND_MASK = Path(__file__).parent / "boundaries" / "land_mask.geojson"
+
+
 def load_clip_mask():
-    """Load states_clean.geojson as a unified clip mask geometry."""
+    """Load the land mask geometry for shoreline/water clipping.
+
+    Uses land_mask.geojson (states minus ocean minus lakes) if available,
+    falls back to dissolving states_clean.geojson.
+    """
+    if LAND_MASK.exists():
+        gdf = gpd.read_file(LAND_MASK)
+        return gdf.geometry.iloc[0]
     states = gpd.read_file(STATES_GJ)
     return states.dissolve().geometry.iloc[0]
 
 
 def clip_features(features, clip_mask):
-    """Clip features to shoreline, dropping empty/non-polygon results."""
+    """Clip features to land mask, keeping islands that clip to empty."""
     clipped = []
     for feat in features:
         geom = shape(feat["geometry"])
@@ -71,6 +81,8 @@ def clip_features(features, clip_mask):
             continue
         result = extract_polygons(result)
         if result is None or result.is_empty:
+            # Island/barrier — keep original geometry
+            clipped.append(feat)
             continue
         feat = dict(feat)
         feat["geometry"] = mapping(result)
