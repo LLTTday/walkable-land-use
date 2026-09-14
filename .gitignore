@@ -8,3 +8,5 @@ scripts/boundaries/*.geojson
 scripts/boundaries/*.zip
 *.DS_Store
 __pycache__/
+scripts/boundaries/baf/
+scripts/boundaries/blocks_pophu/
