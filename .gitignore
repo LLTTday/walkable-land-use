@@ -10,3 +10,6 @@ scripts/boundaries/*.zip
 __pycache__/
 scripts/boundaries/baf/
 scripts/boundaries/blocks_pophu/
+scripts/boundaries/bg_full/
+scripts/boundaries/shares_*.csv
+scripts/boundaries/compare_*.csv

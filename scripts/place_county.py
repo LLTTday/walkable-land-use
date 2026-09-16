@@ -15,13 +15,17 @@ by the share. This module builds the share table from 2010 block population
 (blocks nest in 2010 places) and aggregates it. The area session builds a
 different share table and reuses `aggregate()`.
 
-    uv run python v2/scripts/place_county.py build            # share table → CSV + verification report
+    uv run python v2/scripts/place_county.py build block      # block-population shares → CSV + verification report
+    uv run python v2/scripts/place_county.py build area       # area shares → CSV + report + side-by-side with block
     uv run python v2/scripts/place_county.py nesting 10 08    # geometric nesting check for DE and CO
+    uv run python v2/scripts/place_county.py slivers 10 08    # full-resolution vs cartographic overlay, no threshold
+    uv run python v2/scripts/place_county.py compare          # side-by-side of the two products (from their CSVs)
 
 Inputs (see download_blocks.sh):
     boundaries/baf/BlockAssign_ST{FIPS}_{ST}_INCPLACE_CDP.txt   block → PLACEFP
     boundaries/blocks_pophu/tabblock2010_{FIPS}_pophu.shp       block POP10 / HOUSING10 (no PR file)
     boundaries/blocks_pophu/pr*.pl                              PL 94-171 for Puerto Rico
+    boundaries/bg_full/tl_2010_{FIPS}_bg10.shp                  full-resolution 2010 block groups (area method)
     boundaries/places_raw/tl_2010_{FIPS}_place10.dbf            place names and class
     boundaries/counties/gz_2010_us_050_00_500k.dbf              county names
     nwi_analysis/data/nwi_full_2019_complete.db                 block group NWI + ACS
@@ -40,6 +44,8 @@ BOUNDARIES = Path(__file__).resolve().parent / "boundaries"
 BAF_DIR = BOUNDARIES / "baf"
 POPHU_DIR = BOUNDARIES / "blocks_pophu"
 PLACES_DIR = BOUNDARIES / "places_raw"
+BG_FULL_DIR = BOUNDARIES / "bg_full"
+BG_CARTO_DIR = BOUNDARIES / "bg_raw"
 COUNTIES_DBF = BOUNDARIES / "counties" / "gz_2010_us_050_00_500k.dbf"
 CITIES_JSON = Path(__file__).resolve().parent.parent / "public" / "data" / "cities.json"
 
@@ -94,6 +100,21 @@ ACS_COUNT_COLUMNS = sorted({
 RATE_COLUMNS = ["nwi", "natwalkind", "nwi_scaled_10"]
 
 SHARE_TOLERANCE = 1e-9
+
+# Equal-area projections for area ratios. CONUS: Albers (ESRI:102003). Alaska Albers, Hawaii Albers.
+# Puerto Rico has no standard equal-area CRS; a local Albers centred on the island is used and
+# recorded in the methodology. Ratios within a block group are insensitive to the exact choice.
+CONUS_EQUAL_AREA = "ESRI:102003"
+EQUAL_AREA_CRS = {
+    "02": "EPSG:3338",
+    "15": "ESRI:102007",
+    "72": "+proj=aea +lat_1=17.9 +lat_2=18.5 +lat_0=18.2 +lon_0=-66.4 +datum=NAD83 +units=m +no_defs",
+}
+NOISE_FLOOR_M2 = 1.0  # intersection pieces smaller than this are floating-point residue, not land
+
+
+def equal_area_crs(fips):
+    return EQUAL_AREA_CRS.get(fips, CONUS_EQUAL_AREA)
 
 
 # ----------------------------------------------------------------------------
@@ -282,8 +303,92 @@ def block_share_table(fips):
     return shares[["bg_geoid", "place_geoid", "share", "share_basis", "pop2010"]], basis
 
 
+
 # ----------------------------------------------------------------------------
-# Aggregation — shared with the area session
+# Share table — area
+# ----------------------------------------------------------------------------
+
+def read_block_group_geometry(fips, source="full"):
+    """Block group polygons for one state with a 12-digit `bg_geoid`.
+
+    "full": TIGER 2010 tl_2010_XX_bg10 (the product). "carto": the 500k cartographic files, used
+    only by the sliver comparison — their generalized edges do not coincide with TIGER places.
+    """
+    import geopandas as gpd
+
+    if source == "full":
+        bg = gpd.read_file(BG_FULL_DIR / f"tl_2010_{fips}_bg10.shp")[["GEOID10", "geometry"]]
+        bg = bg.rename(columns={"GEOID10": "bg_geoid"})
+    elif source == "carto":
+        bg = gpd.read_file(BG_CARTO_DIR / f"gz_2010_{fips}_150_00_500k.shp")[["GEO_ID", "geometry"]]
+        bg["bg_geoid"] = bg["GEO_ID"].str.split("US").str[1]
+        bg = bg[["bg_geoid", "geometry"]]
+    else:
+        raise ValueError(source)
+    assert bg["bg_geoid"].str.len().eq(12).all()
+    assert bg["bg_geoid"].is_unique, f"{fips}: duplicate block group IDs in the {source} file"
+    return bg
+
+
+def area_share_table(fips, source="full", noise_floor=NOISE_FLOOR_M2):
+    """(bg_geoid, place_geoid, share, share_basis="area") for one state, by overlay.
+
+    share = area of (block group ∩ place) / area of the block group, both in an equal-area
+    projection. Pieces smaller than `noise_floor` square metres are dropped as numerical residue
+    and counted. No fraction threshold. Returns the share table and a dict of overlay statistics.
+    """
+    import geopandas as gpd
+    from shapely import make_valid
+
+    crs = equal_area_crs(fips)
+    bg = read_block_group_geometry(fips, source).to_crs(crs)
+    pl = gpd.read_file(PLACES_DIR / f"tl_2010_{fips}_place10.shp")[["GEOID10", "geometry"]].to_crs(crs)
+    pl = pl.rename(columns={"GEOID10": "place_geoid"})
+
+    stats = {"fips": fips, "crs": crs, "block_groups": len(bg), "places": len(pl)}
+    stats["invalid_bg"] = int((~bg.is_valid).sum())
+    stats["invalid_places"] = int((~pl.is_valid).sum())
+    if stats["invalid_bg"]:
+        bg["geometry"] = bg.geometry.apply(make_valid)
+    if stats["invalid_places"]:
+        pl["geometry"] = pl.geometry.apply(make_valid)
+
+    # Places should not overlap one another in TIGER 2010; measure it rather than assume it.
+    place_area_sum = pl.geometry.area.sum()
+    stats["place_overlap_m2"] = float(place_area_sum - pl.geometry.union_all().area)
+
+    bg["bg_area"] = bg.geometry.area
+    inter = gpd.overlay(bg, pl, how="intersection", keep_geom_type=True)
+    inter["piece_area"] = inter.geometry.area
+    stats["pieces"] = len(inter)
+    stats["pieces_under_1m2"] = int((inter["piece_area"] < 1.0).sum())
+    tiny = inter["piece_area"] < noise_floor
+    stats["pieces_dropped"] = int(tiny.sum())
+    stats["area_dropped_m2"] = float(inter.loc[tiny, "piece_area"].sum())
+    inter = inter[~tiny]
+    inter["share"] = inter["piece_area"] / inter["bg_area"]
+    stats["pieces_under_10m2"] = int((inter["piece_area"] < 10).sum())
+    stats["pieces_under_0.1pct"] = int((inter["share"] < 0.001).sum())
+    stats["pieces_under_1pct"] = int((inter["share"] < 0.01).sum())
+
+    shares = inter.groupby(["bg_geoid", "place_geoid"], as_index=False)["share"].sum()
+    shares["share_basis"] = "area"
+    return shares[["bg_geoid", "place_geoid", "share", "share_basis"]], stats
+
+
+def sliver_report(fips):
+    """The same overlay on full-resolution and on cartographic block groups, with no noise floor,
+    so the piece-size distributions can be compared. This is the evidence that full-resolution
+    geometry removes the need for a fraction threshold."""
+    print(f"\n== Sliver comparison {STATES[fips]} — pieces by size, no noise floor ==")
+    print(f"  {'geometry':<16}{'pieces':>9}{'< 1 m²':>9}{'< 10 m²':>9}{'< 0.1%':>9}{'< 1%':>9}{'invalid bg':>12}")
+    for source in ("full", "carto"):
+        _, st = area_share_table(fips, source=source, noise_floor=0.0)
+        print(f"  {source:<16}{st['pieces']:>9,}{st['pieces_under_1m2']:>9,}{st['pieces_under_10m2']:>9,}"
+              f"{st['pieces_under_0.1pct']:>9,}{st['pieces_under_1pct']:>9,}{st['invalid_bg']:>12,}")
+
+# ----------------------------------------------------------------------------
+# Aggregation — shared by both share tables
 # ----------------------------------------------------------------------------
 
 def apportion(shares, block_groups):
@@ -446,8 +551,9 @@ def spot_check_multi_county(out, pieces):
             extra = ""
             if has_2010 and r["County FIPS"] in NYC_BOROUGHS_2010:
                 extra = "  ok" if b2010 == NYC_BOROUGHS_2010[r["County FIPS"]] else "  MISMATCH vs borough 2010"
+            tail = f"  2010 {b2010:>10,}{extra}" if has_2010 else ""
             print(f"      {r['County FIPS']} {r['County Name']:<40} pop {r['Population']:>12,.0f}  "
-                  f"share {r['Share of Place Population']:.4f}  scaled NWI {r['Scaled NWI']:.2f}  2010 {b2010:>10,}{extra}")
+                  f"share {r['Share of Place Population']:.4f}  scaled NWI {r['Scaled NWI']:.2f}{tail}")
 
 
 def compare_single_county(out, places):
@@ -495,12 +601,89 @@ def compare_single_county(out, places):
               f"scaled NWI {r['Scaled NWI']:.2f} vs {r['v2_nwi']:.2f}")
 
 
+
+# ----------------------------------------------------------------------------
+# Side-by-side — the two products
+# ----------------------------------------------------------------------------
+
+def compare_products(block_shares=None, area_shares=None, block_groups=None):
+    """Join the block and area products on (Place FIPS, County FIPS) and report the differences.
+    With the share tables, the 25 largest disagreements each get the block group that drives them."""
+    key = ["Place FIPS", "County FIPS"]
+    dt = {"Place FIPS": str, "County FIPS": str}
+    b = pd.read_csv(OUT_DIR / "export_places_by_county_block.csv", dtype=dt).set_index(key)
+    a = pd.read_csv(OUT_DIR / "export_places_by_county_area.csv", dtype=dt).set_index(key)
+    j = b.merge(a, how="outer", left_index=True, right_index=True, suffixes=("_block", "_area"), indicator=True)
+
+    print("\n== Block vs area products ==")
+    only_b = j[j["_merge"] == "left_only"]
+    only_a = j[j["_merge"] == "right_only"]
+    print(f"  rows: block {len(b):,}   area {len(a):,}   in both {int((j['_merge'] == 'both').sum()):,}")
+    print(f"  only in block: {len(only_b):,} (pop {only_b['Population_block'].sum():,.0f})   "
+          f"only in area: {len(only_a):,} (pop {only_a['Population_area'].sum():,.0f})")
+    both = j[j["_merge"] == "both"].copy()
+    both["diff"] = both["Population_block"] - both["Population_area"]
+    both["rel"] = both["diff"] / both["Population_area"].where(both["Population_area"] > 0)
+    d = both["diff"]
+    print(f"  population difference (block − area): identical {int((d == 0).sum()):,}; "
+          f"|diff| ≤ 10: {(d.abs() <= 10).mean():.1%}; ≤ 100: {(d.abs() <= 100).mean():.1%}; "
+          f"≤ 1,000: {(d.abs() <= 1000).mean():.1%}; > 10,000: {int((d.abs() > 10000).sum()):,}")
+    r = both["rel"].dropna()
+    print(f"  relative: median {r.median():+.2%}   |rel| median {r.abs().median():.2%}   "
+          f"90th pct {r.abs().quantile(0.9):.1%}   within 5%: {(r.abs() < 0.05).mean():.1%}")
+    nwi = (both["Scaled NWI_block"] - both["Scaled NWI_area"]).dropna()
+    print(f"  scaled NWI difference: |Δ| median {nwi.abs().median():.3f}   90th pct {nwi.abs().quantile(0.9):.3f}   "
+          f"max {nwi.abs().max():.2f}")
+    print("  by 2015–2019 population of the row (area product):")
+    for lo, hi in [(0, 1_000), (1_000, 10_000), (10_000, 100_000), (100_000, np.inf)]:
+        band = both[(both["Population_area"] >= lo) & (both["Population_area"] < hi)]
+        if band.empty:
+            continue
+        label = f"{lo:,}–{hi:,.0f}" if np.isfinite(hi) else f"{lo:,}+"
+        rr = band["rel"].dropna()
+        print(f"      {label:<18} n {len(band):>6,}   median {rr.median():+.1%}   |rel| median {rr.abs().median():.1%}   "
+              f"within 5%: {(rr.abs() < 0.05).mean():.0%}   within 25%: {(rr.abs() < 0.25).mean():.0%}")
+
+    print("\n  25 largest absolute disagreements, with the block group that drives each:")
+    can_explain = block_shares is not None and area_shares is not None and block_groups is not None
+    if can_explain:
+        bs = block_shares.set_index(["bg_geoid", "place_geoid"])["share"]
+        as_ = area_shares.set_index(["bg_geoid", "place_geoid"])["share"]
+        pop = block_groups["b02001_001e"].fillna(0)
+    top = both.reindex(both["diff"].abs().sort_values(ascending=False).index).head(25)
+    for (pf, cf), row in top.iterrows():
+        line = (f"    {row['Place Name_area']}, {row['State_area']} / {row['County Name_area']}: "
+                f"block {row['Population_block']:,.0f}  area {row['Population_area']:,.0f}  "
+                f"({row['diff']:+,.0f}, {row['rel']:+.0%})")
+        if can_explain:
+            bgs_here = [g for g in set(bs.loc[:, pf].index if pf in bs.index.get_level_values(1) else [])
+                        if g[:5] == cf]
+            bgs_here += [g for g in set(as_.loc[:, pf].index if pf in as_.index.get_level_values(1) else [])
+                         if g[:5] == cf]
+            # the block group pushing hardest in the direction of the row's total difference
+            best, best_delta = None, 0.0
+            for g in set(bgs_here):
+                delta = (bs.get((g, pf), 0.0) - as_.get((g, pf), 0.0)) * pop.get(g, 0.0)
+                if np.sign(delta) == np.sign(row["diff"]) and abs(delta) > abs(best_delta):
+                    best, best_delta = g, delta
+            if best is not None:
+                line += (f"\n        driven by BG {best} (pop {pop.get(best, 0):,.0f}): block share "
+                         f"{bs.get((best, pf), 0.0):.3f} vs area share {as_.get((best, pf), 0.0):.3f} "
+                         f"→ {best_delta:+,.0f}")
+        print(line)
+
+    table = both.reset_index()[["Place FIPS", "Place Name_area", "Class_area", "State_area", "County FIPS",
+                                "County Name_area", "Population_block", "Population_area", "diff", "rel",
+                                "Scaled NWI_block", "Scaled NWI_area"]]
+    table.columns = ["Place FIPS", "Place Name", "Class", "State", "County FIPS", "County Name",
+                     "Population (block)", "Population (area)", "Difference", "Relative Difference",
+                     "Scaled NWI (block)", "Scaled NWI (area)"]
+    table.to_csv(BOUNDARIES / "compare_block_area.csv", index=False)
+    return both
+
 # ----------------------------------------------------------------------------
 # Nesting check — geometric
 # ----------------------------------------------------------------------------
-
-EQUAL_AREA_CRS = {"02": "EPSG:3338", "15": "ESRI:102007"}  # Alaska Albers, Hawaii Albers; CONUS below
-
 
 def nesting_check(fips):
     """Overlay every 2010 block against the 2010 places and report the fraction of each block's
@@ -508,7 +691,7 @@ def nesting_check(fips):
     PLACEFP agrees with the place holding the block's area."""
     import geopandas as gpd
 
-    crs = EQUAL_AREA_CRS.get(fips, "ESRI:102003")
+    crs = equal_area_crs(fips)
     blocks = gpd.read_file(POPHU_DIR / f"tabblock2010_{fips}_pophu.shp")[["BLOCKID10", "geometry"]].to_crs(crs)
     places = gpd.read_file(PLACES_DIR / f"tl_2010_{fips}_place10.shp")[["PLACEFP10", "geometry"]].to_crs(crs)
     blocks["block_area"] = blocks.geometry.area
@@ -544,7 +727,10 @@ def nesting_check(fips):
 
 # ----------------------------------------------------------------------------
 
-def build():
+SHARE_BUILDERS = {"block": block_share_table, "area": area_share_table}
+
+
+def build(method):
     print("Loading block groups, places, counties...")
     block_groups = load_block_groups()
     places = load_places()
@@ -554,25 +740,50 @@ def build():
     for f, (a, b) in list(disagreements.items())[:20]:
         print(f"      {f}: db '{a}'  shp '{b}'")
 
-    print("Share tables by state...")
-    share_frames, basis_frames = [], []
+    print(f"Share tables by state ({method})...")
+    share_frames, basis_frames, overlay_stats = [], [], []
     for fips in sorted(STATES):
-        s, basis = block_share_table(fips)
+        if method == "block":
+            s, basis = block_share_table(fips)
+            basis_frames.append(basis)
+            print(f"  {STATES[fips]} {len(s):>7,} (bg, place) rows")
+        else:
+            s, st = area_share_table(fips)
+            overlay_stats.append(st)
+            print(f"  {STATES[fips]} {len(s):>7,} (bg, place) rows   pieces {st['pieces']:>7,}  "
+                  f"dropped <{NOISE_FLOOR_M2:g} m²: {st['pieces_dropped']:>5,} ({st['area_dropped_m2']:.1f} m²)  "
+                  f"invalid bg/places: {st['invalid_bg']}/{st['invalid_places']}  "
+                  f"place overlap: {st['place_overlap_m2']:.1f} m²")
         share_frames.append(s)
-        basis_frames.append(basis)
-        print(f"  {STATES[fips]} {len(s):>7,} (bg, place) rows")
     shares = pd.concat(share_frames, ignore_index=True)
-    basis_by_bg = pd.concat(basis_frames)
+    basis_by_bg = pd.concat(basis_frames) if basis_frames else None
+    shares.to_csv(BOUNDARIES / f"shares_{method}.csv", index=False)
 
     print("Aggregating...")
     out, pieces = aggregate(shares, block_groups, places, county_names)
-    path = OUT_DIR / "export_places_by_county_block.csv"
+    path = OUT_DIR / f"export_places_by_county_{method}.csv"
     write_output(out, path)
     print(f"  wrote {len(out):,} rows to {path}")
 
     ok = verify(shares, out, pieces, block_groups, basis_by_bg)
+    if overlay_stats:
+        st = pd.DataFrame(overlay_stats)
+        print("\n== Overlay totals ==")
+        print(f"  pieces {st['pieces'].sum():,}; dropped under {NOISE_FLOOR_M2:g} m²: {st['pieces_dropped'].sum():,} "
+              f"totalling {st['area_dropped_m2'].sum():.2f} m²; invalid geometries repaired: "
+              f"{st['invalid_bg'].sum():,} block groups, {st['invalid_places'].sum():,} places; "
+              f"place-on-place overlap: {st['place_overlap_m2'].sum():.2f} m² "
+              f"(max in one state {st['place_overlap_m2'].max():.2f})")
+        print(f"  pieces under 0.1% of their block group: {st['pieces_under_0.1pct'].sum():,}; "
+              f"under 1%: {st['pieces_under_1pct'].sum():,}")
     spot_check_multi_county(out, pieces)
-    compare_single_county(out, places)
+    if method == "block":
+        compare_single_county(out, places)
+    else:
+        block_shares_path = BOUNDARIES / "shares_block.csv"
+        block_shares = (pd.read_csv(block_shares_path, dtype={"bg_geoid": str, "place_geoid": str})
+                        if block_shares_path.exists() else None)
+        compare_products(block_shares, shares, block_groups)
     print("\nALL INVARIANTS HOLD" if ok else "\nINVARIANT FAILURES — see above")
     return ok
 
@@ -580,9 +791,19 @@ def build():
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "build"
     if cmd == "build":
-        sys.exit(0 if build() else 1)
+        method = sys.argv[2] if len(sys.argv) > 2 else "block"
+        assert method in SHARE_BUILDERS, f"method must be one of {list(SHARE_BUILDERS)}"
+        sys.exit(0 if build(method) else 1)
     elif cmd == "nesting":
         for fips in sys.argv[2:] or ["10"]:
             nesting_check(fips)
+    elif cmd == "slivers":
+        for fips in sys.argv[2:] or ["10"]:
+            sliver_report(fips)
+    elif cmd == "compare":
+        block_groups = load_block_groups()
+        dt = {"bg_geoid": str, "place_geoid": str}
+        compare_products(pd.read_csv(BOUNDARIES / "shares_block.csv", dtype=dt),
+                         pd.read_csv(BOUNDARIES / "shares_area.csv", dtype=dt), block_groups)
     else:
         sys.exit(__doc__)
