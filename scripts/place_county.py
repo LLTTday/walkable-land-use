@@ -20,6 +20,7 @@ different share table and reuses `aggregate()`.
     uv run python v2/scripts/place_county.py nesting 10 08    # geometric nesting check for DE and CO
     uv run python v2/scripts/place_county.py slivers 10 08    # full-resolution vs cartographic overlay, no threshold
     uv run python v2/scripts/place_county.py compare          # side-by-side of the two products (from their CSVs)
+    uv run python v2/scripts/place_county.py weights          # the two share tables as products, with a round-trip check
 
 Inputs (see download_blocks.sh):
     boundaries/baf/BlockAssign_ST{FIPS}_{ST}_INCPLACE_CDP.txt   block → PLACEFP
@@ -726,6 +727,173 @@ def nesting_check(fips):
 
 
 # ----------------------------------------------------------------------------
+# Place weights — the share tables as products (S21)
+# ----------------------------------------------------------------------------
+
+WEIGHT_COLUMNS = [
+    "Block Group GEOID10", "Block Group GEOID20", "Place FIPS", "Place Name", "Class", "State",
+    "County FIPS", "County Name", "Share", "Share Basis",
+]
+NWI_CSV = OUT_DIR / "nwi.csv"  # the EPA Smart Location Database export; carries both identifiers
+
+
+def load_geoid20():
+    """12-digit GEOID10 → GEOID20 from the SLD file. The 2019 identifier is the key to ACS 2015–2019;
+    it differs from the 2010 identifier for the block groups the Bureau recoded after 2010."""
+    ids = pd.read_csv(NWI_CSV, dtype=str, usecols=["GEOID10", "GEOID20"])
+    ids["GEOID10"] = ids["GEOID10"].str.zfill(12)
+    ids["GEOID20"] = ids["GEOID20"].str.zfill(12)
+    assert ids["GEOID10"].is_unique
+    return ids.set_index("GEOID10")["GEOID20"]
+
+
+def read_share_table(method):
+    """A share table as S18/S19 wrote it, or None if it has not been built."""
+    path = BOUNDARIES / f"shares_{method}.csv"
+    if not path.exists():
+        return None
+    shares = pd.read_csv(path, dtype={"bg_geoid": str, "place_geoid": str}, float_precision="round_trip")
+    shares["bg_geoid"] = shares["bg_geoid"].str.zfill(12)
+    shares["place_geoid"] = shares["place_geoid"].str.zfill(7)
+    return shares
+
+
+def format_weights(shares, places, county_names, geoid20):
+    """The product table: one row per (block group, place), names joined, both identifiers, no ACS.
+
+    Only block groups in the NWI are products. The 2010 TIGER files carry one block group the SLD
+    does not (an all-water block group); its share rows are returned separately for the report.
+    """
+    in_nwi = shares["bg_geoid"].isin(geoid20.index)
+    dropped = shares[~in_nwi]
+    shares = shares[in_nwi]
+    out = pd.DataFrame({
+        "Block Group GEOID10": shares["bg_geoid"],
+        "Block Group GEOID20": shares["bg_geoid"].map(geoid20),
+        "Place FIPS": shares["place_geoid"],
+        "Place Name": shares["place_geoid"].map(places["place_name"]),
+        "Class": shares["place_geoid"].map(places["class"]),
+        "State": shares["place_geoid"].str[:2].map(STATE_NAMES),
+        "County FIPS": shares["bg_geoid"].str[:5],
+        "County Name": shares["bg_geoid"].str[:5].map(county_names),
+        "Share": shares["share"],
+        "Share Basis": shares["share_basis"],
+    })
+    columns = list(WEIGHT_COLUMNS)
+    if "pop2010" in shares.columns:
+        out["Block Population 2010"] = shares["pop2010"].astype(int)
+        columns.append("Block Population 2010")
+    for c in ["Block Group GEOID20", "Place Name", "Class", "State", "County Name"]:
+        assert out[c].notna().all(), f"{c}: {out[c].isna().sum()} rows could not be named"
+    return out[columns].sort_values(["Block Group GEOID10", "Place FIPS"]).reset_index(drop=True), dropped
+
+
+def read_weights(path):
+    """A weights product read back into the share-table shape aggregate() takes."""
+    w = pd.read_csv(path, dtype={"Block Group GEOID10": str, "Block Group GEOID20": str, "Place FIPS": str,
+                                 "County FIPS": str}, float_precision="round_trip")
+    shares = pd.DataFrame({"bg_geoid": w["Block Group GEOID10"], "place_geoid": w["Place FIPS"],
+                           "share": w["Share"], "share_basis": w["Share Basis"]})
+    if "Block Population 2010" in w.columns:
+        shares["pop2010"] = w["Block Population 2010"]
+    return w, shares
+
+
+def verify_weights(method, product_path, block_groups, places, county_names, geoid20):
+    """The invariants the card names, from the product file itself. Returns (ok, pairs)."""
+    ok = True
+    w, shares = read_weights(product_path)
+    print(f"\n== {method}: {product_path.name} ==")
+    print(f"  rows {len(w):,}   block groups {w['Block Group GEOID10'].nunique():,}   "
+          f"places {w['Place FIPS'].nunique():,}   share basis {w['Share Basis'].value_counts().to_dict()}   "
+          f"zero shares {(w['Share'] == 0).sum():,}")
+
+    not_in_nwi = set(w["Block Group GEOID10"]) - set(block_groups.index)
+    print(f"  block groups not in the NWI data: {len(not_in_nwi)}")
+    ok &= not not_in_nwi
+    ids = w.drop_duplicates("Block Group GEOID10")
+    many = ids.groupby("Block Group GEOID10")["Block Group GEOID20"].nunique()
+    n_recoded = (geoid20.index != geoid20.values).sum()
+    n_here = (ids["Block Group GEOID10"] != ids["Block Group GEOID20"]).sum()
+    print(f"  GEOID10 → GEOID20 one-to-one: {(many == 1).all()}   "
+          f"GEOID20 differs for {n_here} block groups ({n_recoded} in the NWI; the other {n_recoded - n_here} touch no place)")
+    ok &= bool((many == 1).all())
+
+    sums = shares.groupby("bg_geoid")["share"].sum()
+    over = (sums > 1 + SHARE_TOLERANCE).sum()
+    print(f"  Σ share per block group: max {sums.max():.12f}   over 1: {over}   "
+          f"whole: {(sums > 1 - SHARE_TOLERANCE).sum():,}   split: {(sums <= 1 - SHARE_TOLERANCE).sum():,}")
+    ok &= over == 0
+
+    # Round trip: aggregating the product reproduces the rolled-up export. The comparison is to
+    # floating-point summation order: the same rows, the same rounded populations except where an
+    # unrounded value sits on a .5, and the weighted NWI figures to 1e-9.
+    export_path = OUT_DIR / f"export_places_by_county_{method}.csv"
+    out, _ = aggregate(shares, block_groups, places, county_names)
+    exp = pd.read_csv(export_path, dtype={"Place FIPS": str, "County FIPS": str})
+    same_rows = out[["Place FIPS", "County FIPS"]].reset_index(drop=True).equals(exp[["Place FIPS", "County FIPS"]])
+    print(f"  round trip → {export_path.name}: same {len(exp):,} rows in the same order: {same_rows}")
+    ok &= same_rows
+    if same_rows:
+        for c in ["Population"] + NWI_LEVEL_COLUMNS:
+            raw = out[c].to_numpy()
+            diff = np.flatnonzero(np.round(raw).astype(int) != exp[c].to_numpy())
+            half = [i for i in diff if abs(abs(raw[i] - np.floor(raw[i])) - 0.5) < 1e-6]
+            print(f"      {c:<18} rounded values differ in {len(diff)} rows; {len(half)} of them sit on a .5")
+            for i in half[:6]:
+                print(f"          {exp.loc[i, 'Place Name']}, {exp.loc[i, 'County Name']}: "
+                      f"{raw[i]:.9f} here, {exp.loc[i, c]} in the export")
+            ok &= len(diff) == len(half)
+        for c in ["Raw NWI", "Scaled NWI", "Share of Place Population"]:
+            d = (out[c].to_numpy() - exp[c].to_numpy())
+            d = np.nanmax(np.abs(d)) if np.isfinite(d).any() else 0.0
+            print(f"      {c:<26} max |Δ| {d:.2e}")
+            ok &= d < 1e-9
+    return ok, set(zip(shares["bg_geoid"], shares["place_geoid"]))
+
+
+def build_weights():
+    missing = [m for m in ("block", "area") if not (BOUNDARIES / f"shares_{m}.csv").exists()]
+    if missing:
+        print(f"share table(s) not built: {missing} — run `build {missing[0]}` first (S18/S19)")
+        return False
+    print("Loading block groups, places, counties, identifiers...")
+    block_groups = load_block_groups()
+    places = load_places()
+    county_names, _, _, _ = load_county_names(block_groups)
+    geoid20 = load_geoid20()
+    print(f"  {len(block_groups):,} block groups; {len(places):,} places; "
+          f"{(geoid20.index != geoid20.values).sum()} block groups whose GEOID20 differs from GEOID10")
+
+    ok, pairs = True, {}
+    for method in ("block", "area"):
+        shares = read_share_table(method)
+        product, dropped = format_weights(shares, places, county_names, geoid20)
+        path = OUT_DIR / f"export_place_weights_{method}.csv"
+        product.to_csv(path, index=False)
+        print(f"\nwrote {len(product):,} rows to {path}")
+        for _, r in dropped.iterrows():
+            print(f"  not in the NWI, left out: block group {r['bg_geoid']} ({county_names.get(r['bg_geoid'][:5], '?')}), "
+                  f"place {r['place_geoid']} {places['place_name'].get(r['place_geoid'], '?')}, share {r['share']:.6f}, "
+                  f"basis {r['share_basis']}")
+        good, pairs[method] = verify_weights(method, path, block_groups, places, county_names, geoid20)
+        ok &= good
+
+    print("\n== Pair sets ==")
+    only_block = pairs["block"] - pairs["area"]
+    only_area = pairs["area"] - pairs["block"]
+    print(f"  pairs in both files: {len(pairs['block'] & pairs['area']):,}   block only: {len(only_block)}   "
+          f"area only: {len(only_area)}")
+    for bg, pl in sorted(only_block):
+        print(f"      block only: block group {bg}, place {pl} {places['place_name'].get(pl, '?')} "
+              f"({county_names.get(bg[:5], '?')}) — the piece under the area noise floor")
+    for bg, pl in sorted(only_area):
+        print(f"      area only:  block group {bg}, place {pl} {places['place_name'].get(pl, '?')}")
+    print("\nALL INVARIANTS HOLD" if ok else "\nINVARIANT FAILURES — see above")
+    return ok
+
+
+# ----------------------------------------------------------------------------
 
 SHARE_BUILDERS = {"block": block_share_table, "area": area_share_table}
 
@@ -800,6 +968,8 @@ if __name__ == "__main__":
     elif cmd == "slivers":
         for fips in sys.argv[2:] or ["10"]:
             sliver_report(fips)
+    elif cmd == "weights":
+        sys.exit(0 if build_weights() else 1)
     elif cmd == "compare":
         block_groups = load_block_groups()
         dt = {"bg_geoid": str, "place_geoid": str}
