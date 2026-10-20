@@ -71,9 +71,6 @@ EDUCATION_COLS = {
     "doctorate": "b15003_025e",
 }
 
-# Counties patched manually in aggregate.py — skip SQL verification for these
-PATCHED_COUNTIES = {"46113", "02270", "51515"}
-
 # Tolerance for floating point avg_nwi comparison
 NWI_TOLERANCE = 0.015
 
@@ -235,7 +232,8 @@ class Verifier:
         print("\n=== National ===")
         with open(DATA / "national.json") as f:
             national = json.load(f)
-        rows = self.query_block_groups("1=1")
+        # aggregate.py excludes Puerto Rico from every level, the nation included
+        rows = self.query_block_groups("substr(geoid10, 1, 2) != '72'")
         print(f"  {len(rows):,} block groups")
         self.verify_jurisdiction("National", national, rows)
 
@@ -259,12 +257,6 @@ class Verifier:
         print(f"  {len(counties)} counties in JSON")
 
         for fips, county in counties.items():
-            if fips in PATCHED_COUNTIES:
-                # Just verify they exist with documented populations
-                self.checks += 1
-                print(f"  SKIP (patched): {fips} ({county['name']}) — pop {county['population']:,}")
-                continue
-
             rows = self.query_block_groups("substr(geoid10, 1, 5) = ?", (fips,))
             if not rows:
                 self.error(f"County {fips} ({county['name']}): no block groups found in DB")
@@ -364,27 +356,6 @@ class Verifier:
             else:
                 self.ok()
 
-    def verify_patched_counties(self):
-        """Verify the 3 manually patched counties exist with expected populations."""
-        print("\n=== Patched counties ===")
-        with open(DATA / "counties.json") as f:
-            counties = json.load(f)
-
-        expected = {
-            "46113": ("Oglala Lakota County, South Dakota", 14335),
-            "02270": ("Kusilvak Census Area, Alaska", 8250),
-            "51515": ("Bedford city, Virginia", 6449),
-        }
-
-        for fips, (name, pop) in expected.items():
-            if fips not in counties:
-                self.error(f"Patched county {fips} ({name}) missing from JSON")
-                continue
-            self.check_equal(f"Patched {fips} population", pop, counties[fips]["population"])
-            # Verify internal consistency
-            nwi_sum = sum(counties[fips]["by_nwi"].get(str(i), {}).get("population", 0) for i in range(4))
-            self.check_equal(f"Patched {fips} NWI pop sum", pop, nwi_sum)
-
     def run(self):
         print(f"Database: {DB}")
         print(f"Data dir: {DATA}")
@@ -399,7 +370,6 @@ class Verifier:
         self.verify_cities()
         self.verify_csas()
         self.verify_internal_consistency()
-        self.verify_patched_counties()
 
         self.conn.close()
 

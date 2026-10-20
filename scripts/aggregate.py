@@ -360,132 +360,13 @@ def main():
         json.dump(states, f, separators=(",", ":"))
     print(f"  {len(states)} states")
 
-    # Counties — key by 5-digit FIPS
-    # Some block groups have null county_name (DC, Madison NY, etc.)
-    # Fall back to state name + FIPS for unnamed counties
-    COUNTY_FALLBACKS = {
-        "11001": "District of Columbia",
-        "36053": "Madison County, New York",
-        "46113": "Oglala Lakota County, South Dakota",
-        "02270": "Wade Hampton Census Area, Alaska",
-        "51515": "Bedford city, Virginia",
-    }
+    # Counties — key by 5-digit FIPS (the 2010 county; names are the 2010 SF1's, from the database)
     print("Aggregating counties...")
     counties = build_level(
         records,
         key_fn=lambda r: r["geoid10"][:5],
-        name_fn=lambda r: r.get("county_name") or COUNTY_FALLBACKS.get(r["geoid10"][:5]),
+        name_fn=lambda r: r["county_name"],
     )
-    # Patch in counties with ACS data under different FIPS codes
-    # (FIPS renamed between 2010 Census and 2019 ACS)
-    # Helper to distribute county totals across NWI levels by population weight
-    def _split(totals, weights):
-        """Distribute a dict of totals across NWI levels using population weights."""
-        result = {}
-        for level, w in weights.items():
-            result[level] = {}
-            for cat, vals in totals.items():
-                if isinstance(vals, dict):
-                    result[level][cat] = {k: round(v * w) for k, v in vals.items()}
-                else:
-                    result[level][cat] = round(vals * w)
-        return result
-
-    # County totals from Census API (2019 ACS 5-year, state delta method)
-    # NWI level splits from EPA data block group assignments
-    _oglala_demos = {
-        "race": {"white": 737, "black": 11, "native_american": 13378, "asian": 0, "pacific_islander": 0, "other": 20, "two_or_more": 189},
-        "ethnicity": {"hispanic": 585, "non_hispanic": 13750},
-        "income": {"under_25k": 1085, "25k_50k": 707, "50k_100k": 675, "over_100k": 262},
-        "homeownership": {"owner": 6711, "renter": 7309},
-        "transportation": {"drove_alone": 2253, "carpool": 235, "transit": 61, "walking": 416, "bicycle": 15, "wfh": 129, "other": 258},
-        "age": {"under_18": 0, "18_24": 0, "25_34": 0, "35_44": 0, "45_54": 0, "55_64": 0, "65_74": 0, "75_84": 0, "85_plus": 0},
-        "education": {"less_than_hs": 0, "hs_grad": 0, "some_college": 0, "associates": 0, "bachelors": 0, "masters": 0, "professional": 0, "doctorate": 0},
-    }
-    # 8 BGs at level 0 (pop 12681), 1 BG at level 1 (pop 1654)
-    _oglala_split = _split(_oglala_demos, {"0": 12681/14335, "1": 1654/14335})
-
-    _kusilvak_demos = {
-        "race": {"white": 297, "black": 40, "native_american": 7600, "asian": 11, "pacific_islander": 5, "other": 44, "two_or_more": 253},
-        "ethnicity": {"hispanic": 93, "non_hispanic": 8157},
-        "income": {"under_25k": 569, "25k_50k": 541, "50k_100k": 451, "over_100k": 163},
-        "homeownership": {"owner": 5979, "renter": 1954},
-        "transportation": {"drove_alone": 122, "carpool": 80, "transit": 2, "walking": 906, "bicycle": 32, "wfh": 40, "other": 947},
-        "age": {"under_18": 0, "18_24": 0, "25_34": 0, "35_44": 0, "45_54": 0, "55_64": 0, "65_74": 0, "75_84": 0, "85_plus": 0},
-        "education": {"less_than_hs": 0, "hs_grad": 0, "some_college": 0, "associates": 0, "bachelors": 0, "masters": 0, "professional": 0, "doctorate": 0},
-    }
-    # 3 BGs at level 0 (pop 5467), 1 BG at level 1 (pop 2783)
-    _kusilvak_split = _split(_kusilvak_demos, {"0": 5467/8250, "1": 2783/8250})
-
-    # Bedford city: exact per-BG data from Census API
-    # BG 0501002 is level 0 (pop 975), BGs 0501001,003,004,005 are level 1 (pop 5474)
-    _bedford_l0 = {
-        "race": {"white": 790, "black": 112, "native_american": 0, "asian": 32, "pacific_islander": 0, "other": 0, "two_or_more": 41},
-        "ethnicity": {"hispanic": 0, "non_hispanic": 975},
-        "income": {"under_25k": 55, "25k_50k": 106, "50k_100k": 187, "over_100k": 49},
-        "homeownership": {"owner": 669, "renter": 219},
-        "transportation": {"drove_alone": 336, "carpool": 56, "transit": 0, "walking": 19, "bicycle": 0, "wfh": 13, "other": 0},
-        "age": {"under_18": 0, "18_24": 0, "25_34": 0, "35_44": 0, "45_54": 0, "55_64": 0, "65_74": 0, "75_84": 0, "85_plus": 0},
-        "education": {"less_than_hs": 0, "hs_grad": 0, "some_college": 0, "associates": 0, "bachelors": 0, "masters": 0, "professional": 0, "doctorate": 0},
-    }
-    _bedford_l1 = {
-        "race": {"white": 4104, "black": 1223, "native_american": 0, "asian": 2, "pacific_islander": 0, "other": 0, "two_or_more": 145},
-        "ethnicity": {"hispanic": 2, "non_hispanic": 5472},
-        "income": {"under_25k": 776, "25k_50k": 297, "50k_100k": 627, "over_100k": 213},
-        "homeownership": {"owner": 1938, "renter": 3377},
-        "transportation": {"drove_alone": 1869, "carpool": 209, "transit": 0, "walking": 82, "bicycle": 0, "wfh": 54, "other": 89},
-        "age": {"under_18": 0, "18_24": 0, "25_34": 0, "35_44": 0, "45_54": 0, "55_64": 0, "65_74": 0, "75_84": 0, "85_plus": 0},
-        "education": {"less_than_hs": 0, "hs_grad": 0, "some_college": 0, "associates": 0, "bachelors": 0, "masters": 0, "professional": 0, "doctorate": 0},
-    }
-    _empty_demos = {
-        "race": {"white": 0, "black": 0, "native_american": 0, "asian": 0, "pacific_islander": 0, "other": 0, "two_or_more": 0},
-        "ethnicity": {"hispanic": 0, "non_hispanic": 0},
-        "income": {"under_25k": 0, "25k_50k": 0, "50k_100k": 0, "over_100k": 0},
-        "homeownership": {"owner": 0, "renter": 0},
-        "transportation": {"drove_alone": 0, "carpool": 0, "transit": 0, "walking": 0, "bicycle": 0, "wfh": 0, "other": 0},
-        "age": {"under_18": 0, "18_24": 0, "25_34": 0, "35_44": 0, "45_54": 0, "55_64": 0, "65_74": 0, "75_84": 0, "85_plus": 0},
-        "education": {"less_than_hs": 0, "hs_grad": 0, "some_college": 0, "associates": 0, "bachelors": 0, "masters": 0, "professional": 0, "doctorate": 0},
-    }
-
-    COUNTY_PATCHES = {
-        "46113": {
-            "name": "Oglala Lakota County, South Dakota",
-            "population": 14335,
-            "avg_nwi": 3.47,  # weighted by BG populations and raw NWI scores
-            "by_nwi": {
-                "0": {"population": 12681, "demographics": _oglala_split["0"]},
-                "1": {"population": 1654, "demographics": _oglala_split["1"]},
-                "2": {"population": 0, "demographics": _empty_demos},
-                "3": {"population": 0, "demographics": _empty_demos},
-            },
-        },
-        "02270": {
-            "name": "Kusilvak Census Area, Alaska",
-            "population": 8250,
-            "avg_nwi": 5.13,
-            "by_nwi": {
-                "0": {"population": 5467, "demographics": _kusilvak_split["0"]},
-                "1": {"population": 2783, "demographics": _kusilvak_split["1"]},
-                "2": {"population": 0, "demographics": _empty_demos},
-                "3": {"population": 0, "demographics": _empty_demos},
-            },
-        },
-        "51515": {
-            "name": "Bedford city, Virginia",
-            "population": 6449,
-            "avg_nwi": 4.07,  # raw NWI scores 5.5-9.7 on 1-20 scale ≈ 4.1 on 1-10
-            "by_nwi": {
-                "0": {"population": 975, "demographics": _bedford_l0},
-                "1": {"population": 5474, "demographics": _bedford_l1},
-                "2": {"population": 0, "demographics": _empty_demos},
-                "3": {"population": 0, "demographics": _empty_demos},
-            },
-        },
-    }
-    for fips, patch in COUNTY_PATCHES.items():
-        if fips not in counties or counties[fips]["population"] == 0:
-            counties[fips] = patch
-            print(f"  Patched {fips}: {patch['name']} (pop {patch['population']:,})")
 
     with open(OUT / "counties.json", "w") as f:
         json.dump(counties, f, separators=(",", ":"))

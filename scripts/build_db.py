@@ -20,15 +20,21 @@ between 2010 and 2019; joining the ACS on GEOID10 left those 73 without data.
 Inputs:
     nwi_analysis/data/nwi.csv                       the SLD export: both identifiers, NatWalkInd, CSA/CBSA names
     boundaries/acs/{FIPS}.csv                       the ACS pull, one file per state, written by `pull`
-    nwi_analysis/data/nwi_full_2019_complete.db     the current database: the diff baseline, and the source of two
-                                                    columns carried forward (see CARRIED_FORWARD)
+    boundaries/acs/counties_2010.csv                2010 Census (SF1) county names, written by `pull`
+    nwi_analysis/data/nwi_full_2019_complete.db     the current database: the diff baseline, and the source of the
+                                                    one column carried forward (see CARRIED_FORWARD)
 
-What is carried forward rather than rebuilt: `county_name` (copied in Sept 2025
-from an older database that no longer exists) and `city_name` (a PostGIS overlap
-of the CDC 500-cities boundaries, also gone). Both are keyed on GEOID10 and are
-copied from the current database unchanged. Everything else — every ACS column,
-the age and education aggregates, the walkability level and scale — is computed
-here from source.
+County names come from the 2010 SF1, the source the original notebook used, keyed
+on the GEOID10 county: they reproduce every name in the September 2025 database
+exactly, and fill the rows it left blank (the 73 recoded block groups, the
+District of Columbia, Puerto Rico's municipios). COUNTY_NAME_OVERRIDES holds the
+three deliberate departures from the SF1 text.
+
+What is carried forward rather than rebuilt: `city_name` (a PostGIS overlap of the
+CDC 500-cities boundaries, which no longer exists), keyed on GEOID10 and copied
+from the current database unchanged. Everything else — every ACS column, the age
+and education aggregates, the walkability level and scale, the county names — is
+computed here from source.
 
 The API key is read from CENSUS_API_KEY. It is never written to disk by this script.
 """
@@ -119,7 +125,20 @@ COLUMNS = [  # (name, declared type) in the current database's order
   + [(c, "REAL") for c in EDU_GROUPS] + [(c, "INT") for c in ACS_COUNTS if c > "b15003_002z"]
 assert len(COLUMNS) == len({c for c, _ in COLUMNS}) == 11 + 9 + 3 + len(ACS_COUNTS), len(COLUMNS)
 
-CARRIED_FORWARD = ["county_name", "city_name"]
+CARRIED_FORWARD = ["city_name"]
+
+SF1_URL = "https://api.census.gov/data/2010/dec/sf1"
+COUNTIES_2010 = ACS_DIR / "counties_2010.csv"
+
+# The SF1 text is used as published except here. The two counties renamed and recoded in 2015
+# keep their 2010 name, as the 2010 geography requires, with the current name beside it so they
+# can be found under the name in use. The SF1 repeats the state for the District of Columbia;
+# every consumer already calls it "District of Columbia".
+COUNTY_NAME_OVERRIDES = {
+    "46113": "Shannon County (now Oglala Lakota County), South Dakota",
+    "02270": "Wade Hampton Census Area (now Kusilvak Census Area), Alaska",
+    "11001": "District of Columbia",
+}
 
 
 # ----------------------------------------------------------------------------
@@ -172,6 +191,7 @@ def chunks(variables, size=48):  # the API allows 50 variables per request; GEO_
 def pull(fips_list):
     key = api_key()
     ACS_DIR.mkdir(parents=True, exist_ok=True)
+    pull_county_names(key)
     regular = [v for v in PULL_VARIABLES if v not in TRACT_ONLY]
     for fips in fips_list:
         out = ACS_DIR / f"{fips}.csv"
@@ -195,6 +215,27 @@ def pull(fips_list):
         assert acs.index.is_unique, f"{fips}: duplicate block groups in the ACS response"
         acs.to_csv(out, index_label="acs_geoid")
         print(f"  {STATES[fips]} {len(acs):>7,} block groups → {out.name}")
+
+
+def pull_county_names(key):
+    if COUNTIES_2010.exists():
+        print(f"  county names already pulled ({COUNTIES_2010.name})")
+        return
+    params = {"get": "NAME", "for": "county:*", "key": key}
+    with urllib.request.urlopen(SF1_URL + "?" + urllib.parse.urlencode(params), timeout=120) as r:
+        rows = json.loads(r.read().decode())
+    df = pd.DataFrame(rows[1:], columns=rows[0])
+    df["county_fips"] = df["state"] + df["county"]
+    df[["county_fips", "NAME"]].to_csv(COUNTIES_2010, index=False)
+    print(f"  2010 county names: {len(df):,} → {COUNTIES_2010.name}")
+
+
+def county_names():
+    if not COUNTIES_2010.exists():
+        sys.exit(f"missing {COUNTIES_2010.name}; run `pull` first")
+    names = pd.read_csv(COUNTIES_2010, dtype=str).set_index("county_fips")["NAME"].to_dict()
+    names.update(COUNTY_NAME_OVERRIDES)
+    return names
 
 
 def load_acs():
@@ -271,6 +312,7 @@ def build():
     t["geoid10"] = joined["GEOID10"]
     t["objectid"] = joined["OBJECTID"].astype(int)
     t["state_name"] = state.map(STATE_NAMES)
+    t["county_name"] = joined["GEOID10"].str[:5].map(county_names())
     for c in CARRIED_FORWARD:
         t[c] = joined["GEOID10"].map(carried[c])
     t["csa_name"] = joined["CSA_Name"]
@@ -346,10 +388,22 @@ def diff():
         if d.sum() == 0:
             note = ""
         elif c in ("b01001_006z", "b01001_007z", "b01001_008z", "b01001_009z", "b01001_010z"):
-            note = "age 35–84: zero in the old build (its pull omitted these cells); now summed"
-            if not (n2v == len(recoded) and v2n == 0):
+            # The old build's pull omitted these cells and filled them with 0 in every row, the
+            # territories included. Expected now: the old column is 0 throughout; the new one is
+            # null in the territories (as every other ACS column is) and summed everywhere else.
+            note = "age 35–84: zero in every row of the old build (its pull omitted these cells); now summed"
+            territory = new.index.str[:2].isin(TERRITORIES)
+            if not ((a == 0).all() and b[territory].isna().all() and b[~territory].notna().all()):
                 ok = False
-                note += "  UNEXPECTED null pattern"
+                note += "  UNEXPECTED pattern"
+        elif c == "county_name":
+            # Every name the old build had is reproduced; the blanks it left are filled, except
+            # the territories, which the SF1 does not cover.
+            territory = new.index.str[:2].isin(TERRITORIES)
+            note = "names reproduced exactly; blanks filled from the 2010 SF1 (recoded, DC, PR)"
+            if not (v2v == 0 and v2n == 0 and set(d[d].index) == set(old.index[a.isna() & ~territory])):
+                ok = False
+                note += "  UNEXPECTED pattern"
         elif c.startswith("b") and c[1:6].isdigit():
             note = "the 73 recoded block groups" if set(d[d].index) == set(recoded) else "UNEXPECTED rows"
             ok &= set(d[d].index) == set(recoded)
@@ -391,22 +445,16 @@ def diff():
 # ----------------------------------------------------------------------------
 
 def install():
-    """Replace the current database with the new one, carrying the small `city_data` table across.
-    The old `nwi_data` table (the July 2025 build's intermediate, read by nothing) is not carried."""
+    """Replace the current database with the new one. Only `nwi_full` is read by any consumer; the
+    old `nwi_data` table (the July 2025 build's intermediate, read by nothing) is not carried."""
     if not NEW_DB.exists():
         sys.exit(f"{NEW_DB.name} does not exist; run `build` first")
     with sqlite3.connect(NEW_DB) as conn:
-        conn.execute(f"ATTACH DATABASE '{CURRENT_DB}' AS old")
-        conn.execute("DROP TABLE IF EXISTS city_data")
-        conn.execute("CREATE TABLE city_data AS SELECT * FROM old.city_data")
-        n = conn.execute("SELECT count(*) FROM city_data").fetchone()[0]
-        conn.commit()
-        conn.execute("DETACH DATABASE old")
         conn.execute("VACUUM")
     backup = CURRENT_DB.with_suffix(".db.previous")
     shutil.move(CURRENT_DB, backup)
     shutil.move(NEW_DB, CURRENT_DB)
-    print(f"installed {CURRENT_DB.name} ({CURRENT_DB.stat().st_size / 1e6:.0f} MB; city_data {n} rows carried); "
+    print(f"installed {CURRENT_DB.name} ({CURRENT_DB.stat().st_size / 1e6:.0f} MB); "
           f"previous database at {backup.name} (not tracked)")
 
 
